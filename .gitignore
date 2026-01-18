@@ -1,0 +1,11 @@
+# Python junk
+__pycache__/
+*.py[cod]
+venv/
+.env
+.DS_Store
+
+# AI Models (Don't upload large model files!)
+*.gguf
+*.bin
+models/
