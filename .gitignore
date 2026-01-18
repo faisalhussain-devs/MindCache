@@ -8,18 +8,4 @@ venv/
 # AI Models (Don't upload large model files!)
 *.gguf
 *.bin
-*.json
-*.wav
-*.png
-*.jpg
 models/
-LLM_CHATS/
-retrieval/cache/
-hf_cache/
-
-# database
-.db
-
-# Generated retrieval cache (binary, re-built by background scheduler)
-cache/
-*.pkl
