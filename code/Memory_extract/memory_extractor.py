@@ -1,5 +1,5 @@
 from safe_ai import SafeAI
-from schema import ChatExtraction
+from Memory_extract.schema import ChatExtraction
 
 engine = SafeAI(model_name="qwen3-fast")
 
