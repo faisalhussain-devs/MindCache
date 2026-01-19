@@ -151,6 +151,8 @@ class DatabaseManager:
             timeline_id = f"turn_{int(timestamp * 1000)}"
             
             topics = extracted_data.get("memory", {}).get("topics", [])
+            mem_block = extracted_data.get("memory", {})
+            has_content = any(len(mem_block.get(k, [])) > 0 for k in ["user", "fact", "epis"])
 
             if not topics or not has_content:
                 self.cursor.execute("DELETE FROM processing_queue WHERE id=?", (job_id,))
@@ -166,9 +168,6 @@ class DatabaseManager:
                 VALUES (?, ?, ?, ?)
                 """, (timeline_id, timestamp, topics_json, topic_blob)
                 )
-
-            mem_block = extracted_data.get("memory", {})
-            has_content = any(len(mem_block.get(k, [])) > 0 for k in ["user", "fact", "epis"])
 
             rows = []
             for m_type in ["user", "fact", "epis"]:
