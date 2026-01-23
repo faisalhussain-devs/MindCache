@@ -1,15 +1,15 @@
-import time
 import os
 import json
 import numpy as np
-from Database.database import DatabaseManager
 from Memory_extract.memory_extractor import memory_extractor
+from Memory_extract.input_denoiser import InputDenoiser
+from Database.database import DatabaseManager
 
 mem_ext = memory_extractor()
+inp_denoiser = InputDenoiser()
 
 def raw_data():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
+    project_root = os.path.dirname(os.path.abspath(__file__))
 
     raw_input_file = os.path.join(project_root, "data", "raw_chats.txt")
 
@@ -49,8 +49,8 @@ def run_test(inputs):
 
     print("--- 2. SIMULATING USER INPUT (Buffer) ---")
 
-    for prompt, response in inputs:
-        db.add_to_queue(prompt, response)
+    for prompt, response, next_prompt in inputs:
+        db.add_to_queue(prompt, response, next_prompt)
     
     db.cursor.execute("SELECT count(*) FROM processing_queue")
     print(f"Queue Status: {db.cursor.fetchone()[0]} jobs pending.\n")
@@ -64,11 +64,13 @@ def run_test(inputs):
             print("No more jobs in queue. Worker going to sleep.")
             break
             
-        job_id, prompt, response = job
-        print(f"\n[Worker] Processing Job #{job_id}: '{prompt}'")
+        job_id, prompt, response, next_prompt = job
 
         # B. Simulate AI Extraction
-        extracted_data = mem_ext.memory_extract(prompt+" <ChatGPT> "+response)
+        input = prompt+" <ChatGPT> "+response+ "<user>"+ next_prompt
+        compressed_input = inp_denoiser.compress(input)
+        print(f"\n[Worker] Processing Job #{job_id}: '{compressed_input}'")
+        extracted_data = mem_ext.memory_extract(compressed_input)
         print(f"   -> Extracted JSON: {json.dumps(extracted_data['memory'].get('topics', []))}")
 
         # C. Simulate Embedding Generation
@@ -113,7 +115,8 @@ def run_test(inputs):
 if __name__ == "__main__":
     data = raw_data()
     inputs = []
+    next_prompt = "Good it worked. Thankyou"  # telling about the previous thing it worked or not 
     for input in data:
         prompt, response = input.split("<ChatGPT>")
-        inputs.append((prompt, response))
+        inputs.append((prompt, response, next_prompt))
     run_test(inputs)

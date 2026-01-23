@@ -24,6 +24,7 @@ class DatabaseManager:
                 timestamp REAL,
                 raw_prompt TEXT,
                 raw_response TEXT,
+                raw_next_prompt TEXT,
                 status TEXT DEFAULT 'pending', -- pending, processing, failed
                 retry_count INTEGER DEFAULT 0
             )
@@ -35,7 +36,7 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS conversation_turns (
                 timeline_id TEXT PRIMARY KEY,
                 timestamp REAL,
-                topics_json TEXT,       -- Readable list: "['Coding', 'Python']"
+                topics_json TEXT,       -- Readable list: "Domain: Development > Field: AI > Framework: PyTorch > Error: Tensor Shape Mismatch"
                 topic_embedding BLOB    -- Binary Vector for Filtering
             )
         """)
@@ -79,13 +80,13 @@ class DatabaseManager:
         return np.array(vector, dtype=np.float32)
 
     
-    def add_to_queue(self, prompt: str, response: str):
+    def add_to_queue(self, prompt: str, response: str, next_prompt: str):
         """Called when user sends a message. Fast write."""
         timestamp = time.time()
         self.cursor.execute("""
-            INSERT INTO processing_queue (timestamp, raw_prompt, raw_response)
-            VALUES (?, ?, ?)
-        """, (timestamp, prompt, response))
+            INSERT INTO processing_queue (timestamp, raw_prompt, raw_response, raw_next_prompt)
+            VALUES (?, ?, ?, ?)
+        """, (timestamp, prompt, response, next_prompt))
         self.conn.commit()
         print("[DB] Added job to queue.")
 
@@ -97,7 +98,7 @@ class DatabaseManager:
         """
         # 1. Select the candidate (Pending OR Failed, provided it hasn't failed too many times)
         self.cursor.execute("""
-            SELECT id, raw_prompt, raw_response 
+            SELECT id, raw_prompt, raw_response, raw_next_prompt 
             FROM processing_queue 
             WHERE status IN ('pending', 'failed') 
               AND retry_count < ?
