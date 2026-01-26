@@ -90,7 +90,8 @@ class SafeAI:
         try:
             stream = ollama.chat(
                 model=self.model_name, 
-                messages=messages, 
+                messages=messages,
+                format="json", 
                 stream=True,
                 options={
                     "num_ctx": 4096,  # Keep context low for RAM safety
