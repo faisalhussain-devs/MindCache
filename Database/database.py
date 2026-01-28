@@ -31,13 +31,11 @@ class DatabaseManager:
         """)
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_queue_status ON processing_queue(status)")
 
-        # 2. PARENT TABLE (Conversation Turns / Topics)
+        # 2. Message TABLE (Conversation Turns / Topics)
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS conversation_turns (
-                timeline_id TEXT PRIMARY KEY,
-                timestamp REAL,
-                topics_json TEXT,       -- Readable list: "Domain: Development > Field: AI > Framework: PyTorch > Error: Tensor Shape Mismatch"
-                topic_embedding BLOB    -- Binary Vector for Filtering
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL
             )
         """)
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_turn_time ON conversation_turns(timestamp)")
@@ -50,7 +48,21 @@ class DatabaseManager:
                 memory_type TEXT,       -- 'user', 'fact', 'epis'
                 content_text TEXT,
                 content_embedding BLOB, -- Binary Vector for Ranking
-                FOREIGN KEY(timeline_id) REFERENCES conversation_turns(timeline_id)
+                FOREIGN KEY(id) REFERENCES conversation_turns(id)
+            )
+        """)
+        self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_atom_link ON memory_atoms(id)")
+
+        # 4. Graph Table (nodes are topics)
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS topics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                level INTEGER
+                topic TEXT,  
+                summary TEXT,    -- summary of all messages, chats under it(in order of time)
+                parent_id INTEGER,
+                child_id INTEGER,
+                message_ids TEXT  -- We will store the list here as a JSON string
             )
         """)
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_atom_link ON memory_atoms(timeline_id)")

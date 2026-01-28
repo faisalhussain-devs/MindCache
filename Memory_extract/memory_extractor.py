@@ -1,9 +1,12 @@
-from Memory_extract.safe_ai import SafeAI
-from Memory_extract.schema import ChatExtraction
+from safe_ai import SafeAI
+from schema import ChatExtraction
 import json
+import sys
 
 # Extract the schema from your Pydantic model
 schema = ChatExtraction.model_json_schema()
+print(json.dumps(schema, indent=2))
+sys.exit(0)
 
 SYSTEM_PROMPT = f""" You are the "MindCache Extraction Engine." Your goal is to read a conversation (User Input + AI Response) and extract permanent information into a strict JSON format.
 

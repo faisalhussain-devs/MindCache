@@ -3,19 +3,16 @@ from pydantic import BaseModel, Field
 
 # --- 1. THE THINKING LAYER (Reasoning) ---
 class ThinkingStep(BaseModel):
-    txt: str = Field(
-        ..., 
-    )
-    tag: Literal["user", "fact", "epis", "noise"] = Field(
-        ..., 
-    )
+    txt: str = Field(...)
+    tag: Literal["user", "fact", "epis"] = Field(...)
+    topics: List[str] = Field(...)
 
     class Config:
         extra = "forbid"  # Matches additionalProperties: false
 
 # --- 2. THE MEMORY BUCKETS (The "Brain") ---
 class MemoryData(BaseModel):
-    topics: List[str] = Field(
+    topics_branch: List[str] = Field(
         default_factory=list, 
     )
     
@@ -32,16 +29,20 @@ class MemoryData(BaseModel):
     )
 
     class Config:
-        extra = "forbid"  # Matches additionalProperties: false
+        extra = "forbid" 
 
 # --- 3. THE MASTER OBJECT ---
 class ChatExtraction(BaseModel):
     reasoning: List[ThinkingStep] = Field(
         ..., 
     )
-    memory: MemoryData = Field(
+    topics_root: List[str] = Field(
         ..., 
     )
+    memory: List[MemoryData] = Field(
+        ..., 
+    )
+    summary: str = Field(...)
 
     class Config:
         extra = "forbid"  # Matches additionalProperties: false
