@@ -1,11 +1,11 @@
 import os
 import json
 import numpy as np
-from Memory_extract.memory_extractor import memory_extractor
+from Memory_extract.memory_extractor import Memory_Extractor
 from Memory_extract.input_denoiser import InputDenoiser
 from Database.database import DatabaseManager
 
-mem_ext = memory_extractor()
+mem_ext = Memory_Extractor()
 inp_denoiser = InputDenoiser()
 
 def raw_data():
