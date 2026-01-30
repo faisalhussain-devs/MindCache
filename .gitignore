@@ -9,3 +9,6 @@ venv/
 *.gguf
 *.bin
 models/
+
+# database
+.db
