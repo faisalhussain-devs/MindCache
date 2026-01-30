@@ -1,10 +1,11 @@
 import os
-import numpy as np
 from Memory_extract.memory_extractor import Memory_Extractor
 from Memory_extract.input_denoiser import InputDenoiser
 from Database.db_manager import DatabaseManager
 from Database.db_setup import ProcessingJob, TriadBlock, Memory, Topic
+from Database.nodes_summary import RecursiveSummarizer
 
+recursive_summarizer = RecursiveSummarizer()
 mem_ext = Memory_Extractor()
 inp_denoiser = InputDenoiser()
 db_manager = DatabaseManager()
@@ -107,7 +108,8 @@ def run_test(inputs):
 
     finally:
         session.close()
-
+    recursive_summarizer.run()
+    
 
 if __name__ == "__main__":
     data = raw_data()

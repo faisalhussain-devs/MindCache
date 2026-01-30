@@ -1,7 +1,7 @@
 import numpy as np
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import text, func
+from sqlalchemy import func
 from Database.db_setup import engine, init_db, ProcessingJob, Topic, TriadBlock, Memory
 
 class DatabaseManager:

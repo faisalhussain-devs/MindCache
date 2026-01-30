@@ -1,11 +1,9 @@
-import sys
-from datetime import datetime
-from sqlalchemy import func, desc
-from db_setup import SessionLocal, Topic, Memory, TriadBlock
+from sqlalchemy import func
+from Database.db_setup import engine, Topic, Memory, TriadBlock
 from Memory_extract.summary_extractor import Summary_Extractor
+from sqlalchemy.orm import sessionmaker
 
 sum_ext = Summary_Extractor()
-
 def generate_parent_summary(node_name, child_summaries_text):
     """
     Goal: Synthesize multiple reports into a high-level overview.
@@ -30,7 +28,8 @@ def generate_parent_summary(node_name, child_summaries_text):
 # 2. THE SUMMARIZATION ENGINE
 class RecursiveSummarizer:
     def __init__(self):
-        self.session = SessionLocal()
+        self.Session = sessionmaker(bind=engine)
+        self.session = self.Session()
 
     def get_max_depth(self):
         result = self.session.query(func.max(Topic.level)).scalar()
@@ -43,7 +42,7 @@ class RecursiveSummarizer:
         """
         results = (
             self.session.query(TriadBlock)
-            .join(Memory, Memory.source_message_id == TriadBlock.id)
+            .join(Memory, Memory.message_id == TriadBlock.id)
             .filter(Memory.topic_id == topic_id)
             .group_by(TriadBlock.id)  # Group by the Message ID to prevent duplicate entries
             .order_by(TriadBlock.timestamp.asc())
@@ -62,12 +61,13 @@ class RecursiveSummarizer:
         return "\n".join(timeline)
 
     def run(self):
+        session = self.Session()
         max_depth = self.get_max_depth()
         print(f"[Summarizer] Max Depth: {max_depth}. Starting Rollup...")
 
         # LOOP: Bottom-Up (Deepest -> Root)
         for current_level in range(max_depth, -1, -1):
-            nodes = self.session.query(Topic).filter_by(level=current_level).all()
+            nodes = session.query(Topic).filter_by(level=current_level).all()
             print(f"\n--- Processing Level {current_level} ({len(nodes)} nodes) ---")
 
             for node in nodes:
@@ -93,10 +93,10 @@ class RecursiveSummarizer:
                         node.summary = new_summary
 
                 # Add to session (staged for commit)
-                self.session.add(node)
+                session.add(node)
 
             # Commit the whole level at once
-            self.session.commit()
+            session.commit()
 
         print("\n[Summarizer] Complete. Root Node is updated.")
 

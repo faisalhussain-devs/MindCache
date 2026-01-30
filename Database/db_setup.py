@@ -1,5 +1,5 @@
 from sqlalchemy import create_engine, Column, Integer, String, JSON, ForeignKey, DateTime, Float, LargeBinary, event
-from sqlalchemy.orm import declarative_base, relationship, backref, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, backref
 from datetime import datetime
 
 # Use check_same_thread=False for multi-threaded apps (like APIs)
@@ -32,10 +32,7 @@ class Topic(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, index=True)   # e.g., "Skeletonizer"
     level = Column(Integer, default=0)      # 0=Root, 1=Branch...
-    summary = Column(String)                # The "RAPTOR" Summary
-    
-    # list of source message IDs if you want quick access without joining tables (Optimization)
-    message_ids = Column(JSON)              
+    summary = Column(String)                # The "RAPTOR" Summary            
     
     # 1. The Tree Structure (Parent <-> Children)
     parent_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
