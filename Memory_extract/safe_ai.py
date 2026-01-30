@@ -6,7 +6,7 @@ import ollama
 DEFAULT_MODEL = "qwen3-fast"  
 MIN_FREE_RAM_GB = 2.0           # Stop if RAM is dangerously low
 MAX_CPU_LOAD_PCT = 85           # Pause if system is rendering video/gaming
-MIN_BATTERY_PCT = 25            # Minimum battery to run on unplugged
+MIN_BATTERY_PCT = 5            # Minimum battery to run on unplugged
 
 # ECO MODE SETTINGS
 BATCH_SIZE = 4                  # Generate 4 tokens before checking CPU
@@ -91,7 +91,6 @@ class SafeAI:
             stream = ollama.chat(
                 model=self.model_name, 
                 messages=messages,
-                format="json", 
                 stream=True,
                 options={
                     "num_ctx": 4096,  # Keep context low for RAM safety

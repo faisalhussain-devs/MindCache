@@ -1,6 +1,5 @@
 import numpy as np
-import json
-import datetime
+from datetime import datetime
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text, func
 from Database.db_setup import engine, init_db, ProcessingJob, Topic, TriadBlock, Memory
@@ -23,6 +22,10 @@ class DatabaseManager:
     def _from_blob(self, blob):
         """Convert bytes back to numpy array"""
         return np.frombuffer(blob, dtype=np.float32)
+    
+    def vec_embed_gen(self, text):
+        """Simulates generating a 384-dimensional vector."""
+        return np.random.rand(384).astype(np.float32)
 
     # QUEUE OPERATIONS
     def add_to_queue(self, prompt, response, next_prompt):
@@ -119,17 +122,17 @@ class DatabaseManager:
 
 
     # SAVE EXTRACTED MEMORY
-    def save_extracted_memory(self, job_id, raw_msg, extracted_data, content_vec_map):
+    def save_extracted_memory(self, job_id, raw_msg, extracted_data):
         session = self.Session()
         try:
             # 1. Parse Input Data
             topics_root = extracted_data.get("topics_root", [])
-            memory_buckets = extracted_data.get("memories", [])
+            memory_buckets = extracted_data.get("memory", [])
             summary = extracted_data.get("summary", "")
             
             # Validation: If no memories, just cleanup
             if not memory_buckets:
-                print(f"[DB] Job {job_id} discarded (No memory buckets found).")
+                print(f"[DB] Job {job_id} discarded")
                 session.execute(text("DELETE FROM processing_queue WHERE id=:id"), {"id": job_id})
                 session.commit()
                 return
@@ -143,9 +146,8 @@ class DatabaseManager:
             )
             session.add(new_message)
             session.flush()
-
             # 4. Loop through the "Buckets" (Branches)
-            for i, bucket in enumerate(memory_buckets):
+            for bucket in memory_buckets:
                 # A. Resolve Full Path
                 topics_branch = bucket.get("topics_branch", [])
                 full_chain = topics_root + topics_branch
@@ -159,25 +161,17 @@ class DatabaseManager:
                     if not texts:
                         continue
                     
-                    # Get the Big List of Vectors for this type
-                    all_vectors = content_vec_map[i].get(m_type, [])
-                    
-                    for current_idx, text in enumerate(texts):
-                        if current_idx < len(all_vectors):
-                            vec = all_vectors[current_idx]
-                            blob = self._to_blob(vec)
-                            
-                            atom = Memory(
-                                content=text,
-                                type=m_type,
-                                embedding=blob,
-                                topic=topic_leaf_node,          # Link to Graph Node
-                                source_message=new_message # Link to Time Node
-                            )
-                            session.add(atom)
-                            
-                        else:
-                            print(f"[DB Warning] Missing vector for text: {text[:30]}...")
+                    for text in texts:
+                        vec = self.vec_embed_gen(text)
+                        blob = self._to_blob(vec)
+                        atom = Memory(
+                            content=text,
+                            type=m_type,
+                            embedding=blob,
+                            topic=topic_leaf_node,          # Link to Graph Node
+                            message=new_message # Link to Time Node
+                        )
+                        session.add(atom)
 
             job = session.query(ProcessingJob).get(job_id)
             if job:

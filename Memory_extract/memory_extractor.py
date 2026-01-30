@@ -1,48 +1,58 @@
-from safe_ai import SafeAI
-from schema import ChatExtraction
-import json
+from Memory_extract.safe_ai import SafeAI
+from Memory_extract.schema import ChatExtraction
 
 # Extract the schema from your Pydantic model
-schema = ChatExtraction.model_json_schema()
-SYSTEM_PROMPT = f""" You are the "MindCache Extraction Engine." Your goal is to read a conversation (User Input + AI Response) and extract permanent information into a strict JSON format.
+schema_json = ChatExtraction.model_json_schema()
+SYSTEM_PROMPT = f"""You are the MindCache Extraction Engine. Your goal is to read a conversation (User Input + AI Response) and extract permanent information into a strict JSON format.
 
 ### 1. THE EXTRACTION LOGIC
-You must process the input in two phases:
-PHASE A: REASONING (The Filter)
-- Break the input into atomic thoughts.
-- Classify each thought as 'user', 'fact', 'epis' (episodic), or 'noise'.
-- "Noise" (greetings, thanks, small talk) must be discarded from the final memory.
+You must populate the JSON fields following this strict logic:
 
-PHASE B: CONSOLIDATION (The Memory)
-Populate the "memory" object based on your reasoning tags.
+**FIELD 1: "reasoning" (Phase A)**
+- Think step-by-step. Analyze the input to decide what is worth saving.
+- Classify thoughts as 'user', 'fact', 'epis', or 'noise'.
+- Explicitly state *why* you are choosing specific topics.
 
-### 2. DEFINITIONS & RULES (Strict Adherence)
+**FIELD 2: "summary" (The Event Log)**
+- A single, concise sentence summarizing the *interaction* itself.
+- Example: "User refactored the SQL schema to fix a latency bug."
+- This provides context for the specific memories that follow.
 
-[USER] -> "Who they are & How they want me to behave"
-- User preferences (e.g., "Don't use code blocks", "I prefer Python").
-- Biographical details (e.g., "I live in Berlin", "I am a Data Scientist").
-- Behavioral constraints (e.g., "Be concise", "Never apologize").
+**FIELD 3: "topics_root" (Global Context)**
+- The high-level Project or Domain that applies to *all* memories in this turn.
+- Example: ["MindCache", "Backend"] or ["Personal", "Travel"].
 
-[FACT] -> "Project Knowledge, Lessons, & Universal Truths"
-- **CRITICAL:** This now includes *Experience* and *Technical Constraints*.
-- If the user says "I switched to SQLite because MongoDB was too heavy," the FACT is: "Constraint: SQLite is preferred over MongoDB for this project due to memory weight."
-- Store: Project requirements, code snippets explained, solutions that worked, and specific technical decisions.
+**FIELD 4: "memory" (The Data Buckets)**
+- A list of objects. You can create multiple buckets if the user talks about different sub-topics (e.g., one bucket for "Database" and another for "API").
+- Inside each bucket, populate 'topics_branch', 'user', 'fact', and 'epis'.
 
-[EPIS] -> "The Timeline of Events"
-- A log of actions taken in *this* specific turn.
-- e.g., "User debugged the database schema," "User rejected the first draft," "AI provided the BLOB conversion script."
-- Keep this concise. It is for tracking *what happened*, not *what is true*.
+### 2. DEFINITIONS (Strict Adherence)
 
-[TOPICS] -> "Indexing Tags"
-- Extract 3-5 high-level keywords (e.g., "Python", "Database", "Debugging").
-- Range from broad (Cluster) to specific (Entity).
+[topics_branch] -> "Sub-Folder Routing"
+- The specific sub-path for this memory bucket.
+- Example: If root is ["MindCache"], branch might be ["Database", "Migrations"].
 
-### 3. Schema
- {json.dumps(schema, indent=2)}
+[USER] -> "Preferences & Bio"
+- "Who they are" & "How they want me to behave".
+- e.g., "I prefer Python," "Don't use code blocks," "I live in Berlin."
+
+[FACT] -> "Universal Truths & Constraints"
+- **CRITICAL:** Store technical constraints, code logic, and project decisions here.
+- If user says: "I switched to SQLite because MongoDB was heavy,"
+- FACT: "Constraint: SQLite is preferred over MongoDB due to memory weight."
+
+[EPIS] -> "The Narrative"
+- A brief log of *actions* taken in this specific turn.
+- e.g., "User provided the initial schema," "AI debugged the connection error."
+
+### 3. SCHEMA
+{schema_json}
 
 ### 4. FINAL INSTRUCTION
-Your output must be VALID JSON matching the provided schema exactly. Do not include markdown formatting or explanations outside the JSON."""
-
+Your output must be VALID JSON matching the provided schema exactly. 
+- Do not include markdown formatting (```json ... ```). 
+- Do not include explanations outside the JSON object.
+"""
 class Memory_Extractor():
     def __init__(self, model_name="qwen3-fast", sys_prompt=SYSTEM_PROMPT):
         self.engine = SafeAI(model_name=model_name)
@@ -58,7 +68,6 @@ class Memory_Extractor():
         try:
             raw_json = raw_json.replace("<think>", "").replace("</think>", "")
             clean_json = self.engine.clean_json(raw_json)
-            print(clean_json)
             validated_data = ChatExtraction.model_validate_json(clean_json)
             return validated_data.model_dump()
         except Exception as e:
