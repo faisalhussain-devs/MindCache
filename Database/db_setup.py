@@ -32,7 +32,8 @@ class Topic(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, index=True)   # e.g., "Skeletonizer"
     level = Column(Integer, default=0)      # 0=Root, 1=Branch...
-    summary = Column(String)                # The "RAPTOR" Summary            
+    summary = Column(String)                # The "RAPTOR" Summary 
+    embedding = Column(LargeBinary)            
     
     # 1. The Tree Structure (Parent <-> Children)
     parent_id = Column(Integer, ForeignKey('topics.id'), nullable=True)

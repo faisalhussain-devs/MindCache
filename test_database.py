@@ -4,6 +4,7 @@ from Memory_extract.input_denoiser import InputDenoiser
 from Database.db_manager import DatabaseManager
 from Database.db_setup import ProcessingJob, TriadBlock, Memory, Topic
 from Database.nodes_summary import RecursiveSummarizer
+from embedder import run_embedding_job
 
 recursive_summarizer = RecursiveSummarizer()
 mem_ext = Memory_Extractor()
@@ -109,6 +110,7 @@ def run_test(inputs):
     finally:
         session.close()
     recursive_summarizer.run()
+    run_embedding_job()
     
 
 if __name__ == "__main__":

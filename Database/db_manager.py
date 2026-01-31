@@ -22,10 +22,6 @@ class DatabaseManager:
     def _from_blob(self, blob):
         """Convert bytes back to numpy array"""
         return np.frombuffer(blob, dtype=np.float32)
-    
-    def vec_embed_gen(self, text):
-        """Simulates generating a 384-dimensional vector."""
-        return np.random.rand(384).astype(np.float32)
 
     # QUEUE OPERATIONS
     def add_to_queue(self, prompt, response, next_prompt):
@@ -162,12 +158,9 @@ class DatabaseManager:
                         continue
                     
                     for text in texts:
-                        vec = self.vec_embed_gen(text)
-                        blob = self._to_blob(vec)
                         atom = Memory(
                             content=text,
                             type=m_type,
-                            embedding=blob,
                             topic=topic_leaf_node,          # Link to Graph Node
                             message=new_message # Link to Time Node
                         )
