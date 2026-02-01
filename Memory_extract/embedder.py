@@ -28,8 +28,7 @@ class EmbeddingManager:
             normalize_embeddings=True, # Crucial for Cosine Similarity
             show_progress_bar=False
         )
-        # Convert Numpy arrays to Python Lists
-        return [self._to_blob(vec) for vec in embeddings]
+        return embeddings
     
     def _to_blob(self, vector):
         """Convert numpy array to bytes for storage"""
@@ -60,6 +59,9 @@ def run_embedding_job():
                 # Generate
                 vectors = embedder.get_batch_embeddings(texts)
                 
+                # Convert Numpy arrays to bytes
+                vectors = [embedder._to_blob(vec) for vec in vectors]
+                
                 # Save
                 for mem, vec in zip(batch, vectors):
                     mem.embedding = vec
@@ -86,6 +88,9 @@ def run_embedding_job():
                 texts = [t.summary for t in batch]
                 
                 vectors = embedder.get_batch_embeddings(texts)
+                
+                # Convert Numpy arrays to bytes
+                vectors = [embedder._to_blob(vec) for vec in vectors]
                 
                 for topic, vec in zip(batch, vectors):
                     topic.embedding = vec

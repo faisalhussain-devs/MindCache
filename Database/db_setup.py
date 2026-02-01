@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, JSON, ForeignKey, DateTime, Float, LargeBinary, event
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Float, LargeBinary, event
 from sqlalchemy.orm import declarative_base, relationship, backref
 from datetime import datetime
 
