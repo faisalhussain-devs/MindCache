@@ -19,7 +19,7 @@ class ContextBridge:
         )
         
         # 1. Base Case: Always start with Current
-        ctx.query_text = current_prompt
+        ctx.query_text = f"CURRENT MESSAGE: {current_prompt}"
         ctx.history_used = ["current"]
         
         if len(current_prompt) > self.config.max_msg_length or not last_msg:
@@ -41,7 +41,7 @@ class ContextBridge:
         # 3. Check Length of Last Message
         if len(last_msg) > self.config.max_msg_length:
             # Last message is too big to append 'prev' significantly, or we just stop here.
-            combined_text = f"{last_msg} {current_prompt}"
+            combined_text = f"CURRENT MESSAGE: {current_prompt}, LAST MESSAGE: {last_msg}"
             ctx.query_text = combined_text
             ctx.history_used = ["last", "current"]
             ctx.query_vector = self._embed(combined_text)
@@ -52,14 +52,14 @@ class ContextBridge:
             prev_vec = self._embed(prev_msg)
             sim_score_n_minus_2 = self._cosine_similarity(last_vec, prev_vec)
             if sim_score_n_minus_2 >= self.config.drift_threshold:
-                 combined_text = f"{prev_msg} {last_msg} {current_prompt}"
+                 combined_text = f"CURRENT MESSAGE: {current_prompt}, LAST MESSAGE: {last_msg}, SECOND LAST MESSAGE: {prev_msg}"
                  ctx.history_used = ["prev", "last", "current"]
                  ctx.query_text = combined_text
                  ctx.query_vector = self._embed(combined_text)
                  return ctx
         
         # Fallback: Last passed, but Prev didn't (or didn't exist).
-        combined_text = f"{last_msg} {current_prompt}"
+        combined_text = f"CURRENT MESSAGE: {current_prompt}, LAST MESSAGE: {last_msg}"
         ctx.history_used = ["last", "current"]
         ctx.query_text = combined_text
         ctx.query_vector = self._embed(combined_text)

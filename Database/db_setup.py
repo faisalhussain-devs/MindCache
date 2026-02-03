@@ -33,12 +33,15 @@ class Topic(Base):
     name = Column(String, nullable=False, index=True)   # e.g., "Skeletonizer"
     level = Column(Integer, default=0)      # 0=Root, 1=Branch...
     summary = Column(String)                # The "RAPTOR" Summary 
-    embedding = Column(LargeBinary)            
+    embedding = Column(LargeBinary)
+    description = Column(String) # description of the node and its subnodes, helpful for retreival
+    timestamp = Column(Float, default=lambda: datetime.now().timestamp()) # timestamp showing the time the summary for that node was updated        
     
     # 1. The Tree Structure (Parent <-> Children)
     parent_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
     children = relationship("Topic", 
-                          backref=backref('parent', remote_side=[id])
+                          backref=backref('parent', remote_side=[id]),
+                          order_by="Topic.id"
                           )
     
     # 2. Link to Content (One Topic <-> Many Atomic Memories)
@@ -50,13 +53,10 @@ class TriadBlock(Base):
     __tablename__ = 'messages'
 
     id = Column(Integer, primary_key=True)
-    
     # The summary of the WHOLE conversation block (User + AI + User)
     summary = Column(String)                
-    
     # Raw text (Optional, but good for debugging "Context Rot")
     raw_text = Column(String)
-    
     timestamp = Column(DateTime, default=datetime.now)
 
     # Link to Content (One Message Block -> Spawned 5 Atomic Memories)
@@ -69,10 +69,8 @@ class Memory(Base):
     id = Column(Integer, primary_key=True)
     content = Column(String)                # "Fixed regex bug..."
     type = Column(String)                   # "episodic", "factual", "user"
-    
     # Vector Embedding
     embedding = Column(LargeBinary)               
-    
     # Link 1: Conceptual Location (Where does this fit in the project?)
     topic_id = Column(Integer, ForeignKey('topics.id'))
     topic = relationship("Topic", back_populates="memories")
