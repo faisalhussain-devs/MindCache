@@ -6,9 +6,7 @@ from Database.db_setup import engine, init_db, ProcessingJob, Topic, TriadBlock,
 
 class DatabaseManager:
     def __init__(self):
-        # Initialize tables if they don't exist
         init_db()
-        # Create the Session Factory
         self.Session = sessionmaker(bind=engine)
 
     def _to_blob(self, vector):
@@ -23,7 +21,6 @@ class DatabaseManager:
         """Convert bytes back to numpy array"""
         return np.frombuffer(blob, dtype=np.float32)
 
-    # QUEUE OPERATIONS
     def add_to_queue(self, prompt, response, next_prompt):
         session = self.Session()
         try:
@@ -53,7 +50,6 @@ class DatabaseManager:
             if job:
                 job.status = 'processing'
                 session.commit()
-                # Return a dict so we can close the session safely
                 return {
                     'id': job.id,
                     'raw_prompt': job.raw_prompt,
@@ -75,8 +71,7 @@ class DatabaseManager:
                 session.commit()
         finally:
             session.close()
-
-    # HELPER: TOPIC TREE TRAVERSAL
+            
     def _get_or_create_topic_path(self, session, chain):
         """
         Takes a list like ['MindCache', 'Backend', 'Database']
@@ -89,19 +84,15 @@ class DatabaseManager:
         current_node = None
 
         for level, name in enumerate(chain):
-            # 1. Search for node at this level
             query = session.query(Topic).filter(func.lower(Topic.name) == name.lower())
             
             if parent_node:
-                # Must be a child of the previous node
                 query = query.filter(Topic.parent_id == parent_node.id)
             else:
-                # Must be a root node (no parent)
                 query = query.filter(Topic.parent_id.is_(None))
             
             current_node = query.first()
 
-            # 2. Create if missing
             if not current_node:
                 current_node = Topic(
                     name=name,
@@ -111,30 +102,22 @@ class DatabaseManager:
                 session.add(current_node)
                 session.flush() # CRITICAL: Get ID immediately for next loop
             
-            # 3. Step down
-            parent_node = current_node
-            
+            parent_node = current_node 
         return current_node
 
-
-    # SAVE EXTRACTED MEMORY
     def save_extracted_memory(self, job_id, raw_msg, extracted_data):
         session = self.Session()
         try:
-            # 1. Parse Input Data
             topics_root = extracted_data.get("topics_root", [])
             memory_buckets = extracted_data.get("memory", [])
             summary = extracted_data.get("summary", "")
             
-            # Validation: If no memories, just cleanup
             if not memory_buckets:
                 print(f"[DB] Job {job_id} discarded")
                 session.execute(text("DELETE FROM processing_queue WHERE id=:id"), {"id": job_id})
                 session.commit()
                 return
 
-            # 2. Create Time Anchor (The "TriadBlock")
-            # This represents the chat message event itself
             new_message = TriadBlock(
                 summary=summary, 
                 timestamp=datetime.now(),
@@ -142,16 +125,12 @@ class DatabaseManager:
             )
             session.add(new_message)
             session.flush()
-            # 4. Loop through the "Buckets" (Branches)
             for bucket in memory_buckets:
-                # A. Resolve Full Path
                 topics_branch = bucket.get("topics_branch", [])
                 full_chain = topics_root + topics_branch
                 
-                # B. Get the Graph Node (Leaf)
                 topic_leaf_node = self._get_or_create_topic_path(session, full_chain)
 
-                # C. Process each memory type inside this bucket
                 for m_type in ["user", "fact", "epis"]:
                     texts = bucket.get(m_type, [])
                     if not texts:
@@ -179,56 +158,3 @@ class DatabaseManager:
             self.mark_job_status(job_id, "failed")
         finally:
             session.close()
-
-    # SEARCH OPERATIONS
-    def search(self, query_topic_name, query_vec, limit=5):
-        """
-        Hybrid Search:
-        1. Filter by Topic Name (Graph Traversal) - FAST
-        2. Rank by Vector Similarity (Vector Search) - ACCURATE
-        """
-        session = self.Session()
-        results = []
-        try:
-            # Step 1: Filter Logic (Graph)
-            # Find the target topic and its children
-            target_topic = session.query(Topic).filter_by(name=query_topic_name).first()
-            
-            if not target_topic:
-                print(f"[DB] Topic '{query_topic_name}' not found. Searching all.")
-                # Fallback: Search everything if topic not found
-                candidate_memories = session.query(Memory).all()
-            else:
-                # Get memories from this topic
-                candidate_memories = target_topic.memories
-                # OPTIONAL: Get memories from children too (Recursive)
-                for child in target_topic.children:
-                    candidate_memories.extend(child.memories)
-
-            # Step 2: Vector Rank Logic
-            # Note: Doing dot product in Python is fine for <10k items. 
-            # For >10k, use sqlite-vec or FAISS.
-            q_vec = self._from_blob(self._to_blob(query_vec))
-            
-            scored_results = []
-            for mem in candidate_memories:
-                mem_vec = self._from_blob(mem.embedding)
-                score = np.dot(mem_vec, q_vec)
-                scored_results.append((score, mem))
-
-            # Step 3: Sort and Return
-            scored_results.sort(key=lambda x: x[0], reverse=True)
-            
-            for score, mem in scored_results[:limit]:
-                results.append({
-                    "content": mem.content,
-                    "type": mem.type,
-                    "score": float(score),
-                    "topic": mem.topic.name,
-                    "source_id": mem.message_id
-                })
-
-        finally:
-            session.close()
-        
-        return results

@@ -17,39 +17,30 @@ class RootDescent:
         """
         session = self.Session()
         final_context_parts = []
-        sources = []
-        debug_trace = []
         
         try:
-            # Re-merge root_node into this session
             root = session.query(Topic).get(root_node.id)
             if not root:
-                return RetrievalResult("", [], ["Root node not found in Phase 3"])
+                return RetrievalResult("")
 
-            debug_trace.append(f"Root Selected: {root.name}")
-            final_context_parts.append(f"# Domain: {root.name}")
+            final_context_parts.append(f" Domain: {root.name}")
             
-            # Start Recursion
             self._recursive_scan(
                 session=session,
                 node=root, 
                 query_vec=ctx.query_vector, 
                 context_parts=final_context_parts, 
-                sources=sources, 
-                debug_trace=debug_trace,
                 current_path=[root.name]
             )
 
             return RetrievalResult(
-                context_str="\n".join(final_context_parts),
-                sources=sources,
-                debug_log=debug_trace
+                candidates="\n".join(final_context_parts)
             )
 
         finally:
             session.close()
 
-    def _recursive_scan(self, session, node, query_vec, context_parts, sources, debug_trace, current_path):
+    def _recursive_scan(self, session, node, query_vec, context_parts, current_path):
         children = node.children
         if not children:
             return
@@ -67,16 +58,8 @@ class RootDescent:
             child_path = current_path + [child.name]
             path_str = " > ".join(child_path)
 
-            if score >= self.config.hot_threshold:
-                debug_trace.append(f"HOT ({score:.2f}): {child.name}")
-                context_parts.append(f"[Current Topic]: {child.name} Path: {path_str} [Summary] {child.summary}")
-                sources.append({"id": child.id, "name": child.name, "score": float(score), "type": "topic_hot"})
-                self._recursive_scan(session, child, query_vec, context_parts, sources, debug_trace, child_path)
-                
-            elif score >= self.config.cold_threshold:
-                debug_trace.append(f"WARM ({score:.2f}): {child.name}")
-                context_parts.append(f"[Current Topic]: {child.name} Path: {path_str}")
-                sources.append({"id": child.id, "name": child.name, "score": float(score), "type": "topic_cold"})
-                self._recursive_scan(session, child, query_vec, context_parts, sources, debug_trace, child_path)
+            if score >= self.config.threshold:
+                context_parts.append(f"[Current Topic]: {child.name} Path: {path_str} [Description] {child.description} score: {float(score):.3f}")
+                self._recursive_scan(session, child, query_vec, context_parts, child_path)
             else:
                 pass

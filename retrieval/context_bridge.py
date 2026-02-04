@@ -1,7 +1,7 @@
 from typing import Optional
 import numpy as np
 from retrieval.structs import RetrievalContext, RetrievalConfig
-from Memory_extract.embedder import EmbeddingManager
+from Database.embedder import EmbeddingManager
 
 class ContextBridge:
     def __init__(self, embedder: EmbeddingManager, config: RetrievalConfig):

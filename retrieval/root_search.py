@@ -18,16 +18,12 @@ class RootSearch:
         """
         session = self.Session()
         try:
-            # 1. Fetch all Level 0 Topics (Roots)
             roots = session.query(Topic).filter_by(level=0).all()
             
             if not roots:
                 return None
-
-            # 2. Score Roots
             best_score = -1.0
             best_node = None
-            
             query_vec = ctx.query_vector
 
             for root in roots:
@@ -43,11 +39,9 @@ class RootSearch:
                     best_score = score
                     best_node = root
 
-            # 3. Threshold Check
             if best_score >= self.config.root_selection_threshold:
                 session.expunge(best_node) # Detach it so we can use it after close
                 return best_node
             return None
-            
         finally:
             session.close()

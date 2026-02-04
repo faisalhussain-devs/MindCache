@@ -5,7 +5,7 @@ from Database.db_setup import engine, Topic, Memory, TriadBlock
 from Memory_extract.summary_extractor import Summary_Extractor
 from sqlalchemy.orm import sessionmaker
 
-MAJOR_UPDATE_THRESHOLD = 50
+MAJOR_UPDATE_THRESHOLD = 60
 
 class RecursiveSummarizer:
     def __init__(self):
@@ -55,10 +55,10 @@ class RecursiveSummarizer:
         """
         if node.summary and node.description:
             last_ts = node.timestamp.timestamp()
-            new_content = self.get_leaf_summary(node.id, min_timestamp=last_ts)
+            new_content = self.get_leaf_summary(session, node.id, min_timestamp=last_ts)
             if not new_content: return
             node.summary += " " + new_content
-            print(f"  [Leaf] Updating Description for '{node.name}'")
+            print(f"  [Leaf] Updating Summary for '{node.name}'")
 
             desc_prompt = f"""
             Update the following description with new information.
@@ -67,7 +67,7 @@ class RecursiveSummarizer:
             Output ONLY the updated concise description suitable for retrieval.
             """
         else:
-            full_content = self.get_leaf_summary(node.id, min_timestamp=0)
+            full_content = self.get_leaf_summary(session, node.id, min_timestamp=0)
             if not full_content: return
             node.summary = full_content
             print(f" [Leaf] Init Description for '{node.name}'")\
@@ -78,8 +78,8 @@ class RecursiveSummarizer:
             Output ONLY the concise description suitable for retrieval.
             """
 
-            new_desc = self.extractor.summary_extract(desc_prompt)
-            if new_desc: node.description = new_desc
+        new_desc = self.extractor.summary_extract(desc_prompt)
+        if new_desc: node.description = new_desc
             
         node.timestamp = datetime.now()
         session.add(node)
@@ -107,7 +107,6 @@ class RecursiveSummarizer:
         source_map = state.get("source_map", {})
         ignored_ids = set(state.get("ignored_ids", []))
         
-        # 2. Identify Changes
         updates = []  
         
         for child in children:
@@ -116,7 +115,7 @@ class RecursiveSummarizer:
             
             if child_ts > node_ts:
                 status = "EXISTING_SOURCE" if str(child.id) in source_map else ("IGNORED" if child.id in ignored_ids else "NEW")
-                if status == "IGNORED" and len(child.summary or "") < 50:
+                if status == "IGNORED" and len(child.summary or "") < MAJOR_UPDATE_THRESHOLD:
                     continue
                     
                 updates.append({
@@ -216,6 +215,7 @@ class RecursiveSummarizer:
                 for uid in removes:
                     if str(uid) in source_map:
                         del source_map[str(uid)]
+                        ignored_ids.add(int(uid))
                 
                 for uid in new_ignores:
                     ignored_ids.add(int(uid))

@@ -46,7 +46,6 @@ def run_embedding_job():
     try:
         print("\n--- Phase 1: Processing Memories ---")
         
-        # Fetch only memories that are MISSING embeddings
         memories = session.query(Memory).filter(Memory.embedding == None).all()
         total_mems = len(memories)
         print(f"Found {total_mems} memories needing vectors.")
@@ -56,26 +55,19 @@ def run_embedding_job():
                 batch = memories[i : i + MEM_BATCH_SIZE]
                 texts = [m.content for m in batch]
                 
-                # Generate
                 vectors = embedder.get_batch_embeddings(texts)
-                
-                # Convert Numpy arrays to bytes
                 vectors = [embedder._to_blob(vec) for vec in vectors]
                 
-                # Save
                 for mem, vec in zip(batch, vectors):
                     mem.embedding = vec
                 
-                # Commit every batch to save progress
                 session.commit()
                 print(f" -> Processed {i + len(batch)}/{total_mems} memories...")
 
-        # PHASE 2: EMBED TOPICS (Summaries)
         print("\n--- Phase 2: Processing Topic Summaries ---")
         
-        # Fetch topics that HAVE a summary but NO embedding
         topics = session.query(Topic).filter(
-            Topic.summary != None, 
+            Topic.description != None, 
             Topic.embedding == None
         ).all()
         
@@ -85,7 +77,7 @@ def run_embedding_job():
         if total_topics > 0:
             for i in range(0, total_topics, SUMM_BATCH_SIZE):
                 batch = topics[i : i + SUMM_BATCH_SIZE]
-                texts = [t.summary for t in batch]
+                texts = [t.description for t in batch]
                 
                 vectors = embedder.get_batch_embeddings(texts)
                 

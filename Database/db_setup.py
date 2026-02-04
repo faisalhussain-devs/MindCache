@@ -18,7 +18,7 @@ class ProcessingJob(Base):
     __tablename__ = 'processing_queue'
 
     id = Column(Integer, primary_key=True)
-    timestamp = Column(Float, default=lambda: datetime.now().timestamp())
+    timestamp = Column(DateTime, default=datetime.now)
     raw_prompt = Column(String)
     raw_response = Column(String)
     raw_next_prompt = Column(String)
@@ -35,9 +35,8 @@ class Topic(Base):
     summary = Column(String)                # The "RAPTOR" Summary 
     embedding = Column(LargeBinary)
     description = Column(String) # description of the node and its subnodes, helpful for retreival
-    timestamp = Column(Float, default=lambda: datetime.now().timestamp()) # timestamp showing the time the summary for that node was updated        
-    
-    # 1. The Tree Structure (Parent <-> Children)
+    timestamp = Column(DateTime, default=datetime.now) 
+
     parent_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
     children = relationship("Topic", 
                           backref=backref('parent', remote_side=[id]),
@@ -69,9 +68,7 @@ class Memory(Base):
     id = Column(Integer, primary_key=True)
     content = Column(String)                # "Fixed regex bug..."
     type = Column(String)                   # "episodic", "factual", "user"
-    # Vector Embedding
     embedding = Column(LargeBinary)               
-    # Link 1: Conceptual Location (Where does this fit in the project?)
     topic_id = Column(Integer, ForeignKey('topics.id'))
     topic = relationship("Topic", back_populates="memories")
 

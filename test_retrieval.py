@@ -8,15 +8,7 @@ def run_test_query(query):
     ap = ActivePathRetrieval(config)
     result = ap.retrieve(current_prompt=query)
     
-    print("\n[ACTIVE PATH TRACE]")
-    for log in result.debug_log:
-        print(f"  {log}")
-        
-    print(f"\n[FINAL CONTEXT]\n{result.context_str}")
-    
-    print("\n[SOURCES]")
-    for src in result.sources:
-        print(f"  - {src['name']} ({src['type']}) Score: {src['score']:.3f}")
+    print(f"\n[FINAL CONTEXT]\n{result}")
 
 if __name__ == "__main__":
     query = "What about the visa internship. what are its eligibility criteria. will i get the internship ?" 

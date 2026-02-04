@@ -14,8 +14,7 @@ class RetrievalConfig:
     root_selection_threshold: float = 0.35 
     
     # Root Descent (Phase 3)
-    hot_threshold: float = 0.5 
-    cold_threshold: float = 0.35 
+    threshold: float = 0.35 
     
     # Agentic Refiner (Phase 4)
     model_name: str = "qwen3-fast" # Model for refinement
@@ -39,12 +38,7 @@ class RetrievalContext:
 @dataclass
 class RetrievalResult:
     """Standardized output from the retrieval system"""
-    context_str: str # The final context string (or JSON representation)
-    sources: List[dict] # Candidate sources from Descent
-    debug_log: List[str] 
-    
-    # Refined Output (Optional)
-    refined_json: Optional[dict] = None
+    candidates: str # The final candidates string
 
 # --- LLM OUTPUT SCHEMA ---
 class SelectedItem(BaseModel):

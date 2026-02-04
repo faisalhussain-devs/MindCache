@@ -4,7 +4,7 @@ from Memory_extract.input_denoiser import InputDenoiser
 from Database.db_manager import DatabaseManager
 from Database.db_setup import ProcessingJob, TriadBlock, Memory, Topic
 from Database.nodes_summary import RecursiveSummarizer
-from Memory_extract.embedder import run_embedding_job
+from Database.embedder import run_embedding_job
 
 recursive_summarizer = RecursiveSummarizer()
 mem_ext = Memory_Extractor()
@@ -37,7 +37,6 @@ def run_test(inputs):
     session = db_manager.Session()
     
     try:
-        # Clear tables in specific order (Child -> Parent) to avoid Foreign Key errors
         session.query(ProcessingJob).delete()
         session.query(Memory).delete()
         session.query(TriadBlock).delete()
@@ -62,7 +61,6 @@ def run_test(inputs):
     print("--- 3. STARTING WORKER LOOP (Processing) ---")
     
     while True:
-        # A. Fetch Job (Using the Manager's method)
         job = db_manager.get_pending_job()
         
         if not job:
@@ -70,8 +68,6 @@ def run_test(inputs):
             break
 
         job_id, prompt, response, next_prompt = job["id"], job["raw_prompt"], job["raw_response"], job["raw_next_prompt"]
-
-        # formatting the input for the Extractor
         full_text = f"<user> {prompt} <ChatGPT> {response} <user> {next_prompt}"
         
         compressed_input = inp_denoiser.compress(full_text)
@@ -80,7 +76,6 @@ def run_test(inputs):
     
         extracted_data = mem_ext.memory_extract(compressed_input)     
 
-        # 3. SAVE TO VAULT
         db_manager.save_extracted_memory(
             job_id,
             compressed_input, 
