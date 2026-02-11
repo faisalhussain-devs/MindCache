@@ -2,7 +2,7 @@ import numpy as np
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import func
-from Database.db_setup import engine, init_db, ProcessingJob, Topic, TriadBlock, Memory
+from Database.db_setup import engine, init_db, ProcessingJob, Topic, TriadBlock, UserMemory, EpisodicMemory, KnowledgeMemory, DecisionMemory, MemoryRegistry
 
 class DatabaseManager:
     def __init__(self):
@@ -110,7 +110,6 @@ class DatabaseManager:
         try:
             topics_root = extracted_data.get("topics_root", [])
             memory_buckets = extracted_data.get("memory", [])
-            summary = extracted_data.get("summary", "")
             
             if not memory_buckets:
                 print(f"[DB] Job {job_id} discarded")
@@ -119,9 +118,8 @@ class DatabaseManager:
                 return
 
             new_message = TriadBlock(
-                summary=summary, 
-                timestamp=datetime.now(),
-                raw_text=raw_msg
+                raw_msg=raw_msg, 
+                timestamp=datetime.now()
             )
             session.add(new_message)
             session.flush()
@@ -131,17 +129,30 @@ class DatabaseManager:
                 
                 topic_leaf_node = self._get_or_create_topic_path(session, full_chain)
 
-                for m_type in ["user", "fact", "epis"]:
+                # Map bucket keys to (MemoryClass, registry_type)
+                type_map = {
+                    "user": (UserMemory, "user"),
+                    "fact": (KnowledgeMemory, "knowledge"),
+                    "epis": (EpisodicMemory, "episodic"),
+                    "decision": (DecisionMemory, "decision"),
+                }
+
+                for m_type, (MemoryClass, registry_type) in type_map.items():
                     texts = bucket.get(m_type, [])
                     if not texts:
                         continue
                     
                     for text in texts:
-                        atom = Memory(
+                        # Register in global registry first
+                        reg = MemoryRegistry(memory_type=registry_type)
+                        session.add(reg)
+                        session.flush()  # Get the global ID
+
+                        atom = MemoryClass(
+                            id=reg.id,
                             content=text,
-                            type=m_type,
-                            topic=topic_leaf_node,          # Link to Graph Node
-                            message=new_message # Link to Time Node
+                            topic=topic_leaf_node,
+                            message=new_message
                         )
                         session.add(atom)
 

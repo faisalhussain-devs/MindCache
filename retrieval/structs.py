@@ -7,8 +7,8 @@ class RetrievalConfig:
     """Configuration for the Active Path Retrieval System"""
     # Context Bridge (Phase 1)
     drift_threshold: float = 0.5
-    max_msg_length: int = 2000 # Characters
-    min_msg_length: int = 200
+    max_msg_length: int = 500 # Characters
+    min_msg_length: int = 100
     
     # Root Dictionary Search (Phase 2)
     root_selection_threshold: float = 0.35 

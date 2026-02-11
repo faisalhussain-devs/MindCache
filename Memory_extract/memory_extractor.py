@@ -13,16 +13,11 @@ You must populate the JSON fields following this strict logic:
 - Classify thoughts as 'user', 'fact', 'epis', or 'noise'.
 - Explicitly state *why* you are choosing specific topics.
 
-**FIELD 2: "summary" (The Event Log)**
-- A single, concise sentence summarizing the *interaction* itself.
-- Example: "User refactored the SQL schema to fix a latency bug."
-- This provides context for the specific memories that follow.
-
-**FIELD 3: "topics_root" (Global Context)**
+**FIELD 2: "topics_root" (Global Context)**
 - The high-level Project or Domain that applies to *all* memories in this turn.
 - Example: ["MindCache", "Backend"] or ["Personal", "Travel"].
 
-**FIELD 4: "memory" (The Data Buckets)**
+**FIELD 3: "memory" (The Data Buckets)**
 - A list of objects. You can create multiple buckets if the user talks about different sub-topics (e.g., one bucket for "Database" and another for "API").
 - Inside each bucket, populate 'topics_branch', 'user', 'fact', and 'epis'.
 
@@ -44,6 +39,10 @@ You must populate the JSON fields following this strict logic:
 [EPIS] -> "The Narrative"
 - A brief log of *actions* taken in this specific turn.
 - e.g., "User provided the initial schema," "AI debugged the connection error."
+
+[DECISION] -> "The Why"
+- Explicitly store the reasoning behind choices.
+- e.g., "Chose cosine similarity over euclidean distance for better text matching."
 
 ### 3. SCHEMA
 {schema_json}

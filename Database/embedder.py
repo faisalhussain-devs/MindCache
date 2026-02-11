@@ -1,7 +1,7 @@
 import numpy as np
 from sqlalchemy.orm import sessionmaker
 from sentence_transformers import SentenceTransformer
-from Database.db_setup import engine, Memory, Topic
+from Database.db_setup import engine, Topic
 
 MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B" 
 MEM_BATCH_SIZE = 24  # Process 32 items at a time to be fast but safe
@@ -44,28 +44,6 @@ def run_embedding_job():
     embedder = EmbeddingManager()
 
     try:
-        print("\n--- Phase 1: Processing Memories ---")
-        
-        memories = session.query(Memory).filter(Memory.embedding == None).all()
-        total_mems = len(memories)
-        print(f"Found {total_mems} memories needing vectors.")
-
-        if total_mems > 0:
-            for i in range(0, total_mems, MEM_BATCH_SIZE):
-                batch = memories[i : i + MEM_BATCH_SIZE]
-                texts = [m.content for m in batch]
-                
-                vectors = embedder.get_batch_embeddings(texts)
-                vectors = [embedder._to_blob(vec) for vec in vectors]
-                
-                for mem, vec in zip(batch, vectors):
-                    mem.embedding = vec
-                
-                session.commit()
-                print(f" -> Processed {i + len(batch)}/{total_mems} memories...")
-
-        print("\n--- Phase 2: Processing Topic Summaries ---")
-        
         topics = session.query(Topic).filter(
             Topic.description != None, 
             Topic.embedding == None

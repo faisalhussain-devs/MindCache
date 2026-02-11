@@ -37,9 +37,7 @@ class ActivePathRetrieval:
             return RetrievalResult(
                  context_str="No relevant long-term memory found (Chitchat mode)"
              )
-        print(root_node)
         descent_result = self.descent.descend(root_node, ctx)
-        print(descent_result)
         refined_output = self.refiner.refine(
             query=ctx.query_text if ctx.query_text else ctx.current_prompt,
             candidates=descent_result.candidates

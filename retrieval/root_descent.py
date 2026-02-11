@@ -59,7 +59,7 @@ class RootDescent:
             path_str = " > ".join(child_path)
 
             if score >= self.config.threshold:
-                context_parts.append(f"[Current Topic]: {child.name} Path: {path_str} [Description] {child.description} score: {float(score):.3f}")
+                context_parts.append(f"Current Topic {child.name} Path {path_str} score {float(score):.3f}")
                 self._recursive_scan(session, child, query_vec, context_parts, child_path)
             else:
                 pass

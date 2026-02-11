@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 # --- 1. THE THINKING LAYER (Reasoning) ---
 class ThinkingStep(BaseModel):
     txt: str = Field(...)
-    tag: Literal["user", "fact", "epis"] = Field(...)
+    tag: Literal["user", "fact", "epis", "decision"] = Field(...)
     topics: List[str] = Field(...)
 
     class Config:
@@ -28,6 +28,10 @@ class MemoryData(BaseModel):
         default_factory=list, 
     )
 
+    decision: List[str] = Field(
+        default_factory=list, 
+    )
+
     class Config:
         extra = "forbid" 
 
@@ -42,7 +46,6 @@ class ChatExtraction(BaseModel):
     memory: List[MemoryData] = Field(
         ..., 
     )
-    summary: str = Field(...)
 
     class Config:
         extra = "forbid"  # Matches additionalProperties: false
