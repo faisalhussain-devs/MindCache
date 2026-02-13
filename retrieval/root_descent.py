@@ -1,7 +1,64 @@
+import math
+from collections import Counter
 from Database.db_setup import Topic
 from Database.db_manager import DatabaseManager
-from retrieval.structs import RetrievalContext, RetrievalConfig, RetrievalResult
+from retrieval.structs import RetrievalContext, RetrievalConfig, CandidateTopic
 from retrieval.context_bridge import ContextBridge
+
+class BM25Scorer:
+    """Lightweight BM25 scorer for topic name + description."""
+    
+    def __init__(self, k1=1.5, b=0.75):
+        self.k1 = k1
+        self.b = b
+        self.corpus = []      # List of tokenized docs
+        self.doc_lens = []
+        self.avg_dl = 0
+        self.idf = {}
+        self.N = 0
+
+    def fit(self, documents: list[str]):
+        """Build index from a list of text documents."""
+        self.corpus = [self._tokenize(doc) for doc in documents]
+        self.N = len(self.corpus)
+        self.doc_lens = [len(doc) for doc in self.corpus]
+        self.avg_dl = sum(self.doc_lens) / max(self.N, 1)
+        
+        # Calculate IDF
+        df = Counter()
+        for doc in self.corpus:
+            unique_terms = set(doc)
+            for term in unique_terms:
+                df[term] += 1
+        
+        self.idf = {}
+        for term, freq in df.items():
+            self.idf[term] = math.log((self.N - freq + 0.5) / (freq + 0.5) + 1)
+
+    def score(self, query: str, doc_idx: int) -> float:
+        """Score a single document against a query."""
+        query_terms = self._tokenize(query)
+        doc = self.corpus[doc_idx]
+        dl = self.doc_lens[doc_idx]
+        
+        tf_map = Counter(doc)
+        score = 0.0
+        
+        for term in query_terms:
+            if term not in self.idf:
+                continue
+            tf = tf_map.get(term, 0)
+            numerator = tf * (self.k1 + 1)
+            denominator = tf + self.k1 * (1 - self.b + self.b * dl / max(self.avg_dl, 1))
+            score += self.idf[term] * (numerator / denominator)
+        
+        return score
+
+    def _tokenize(self, text: str) -> list[str]:
+        if not text:
+            return []
+        return text.lower().split()
+
 
 class RootDescent:
     def __init__(self, config: RetrievalConfig, context_bridge: ContextBridge):
@@ -10,56 +67,96 @@ class RootDescent:
         self.db_manager = DatabaseManager()
         self.Session = self.db_manager.Session
 
-    def descend(self, root_node: Topic, ctx: RetrievalContext) -> RetrievalResult:
+    def descend(self, root_node: Topic, ctx: RetrievalContext) -> list[CandidateTopic]:
         """
-        Phase 3: Beam Descent.
-        Prune the sub-graph of the elected Root Node.
+        Phase 3: Lean Descent.
+        Returns top-k candidates with name, path, sim_score, bm25_score, timestamp.
+        No descriptions or summaries sent to refiner.
         """
         session = self.Session()
-        final_context_parts = []
+        all_candidates = []
         
         try:
             root = session.query(Topic).get(root_node.id)
             if not root:
-                return RetrievalResult("")
+                return []
 
-            final_context_parts.append(f" Domain: {root.name}")
-            
-            self._recursive_scan(
+            # Collect ALL matching nodes recursively
+            self._recursive_collect(
                 session=session,
                 node=root, 
-                query_vec=ctx.query_vector, 
-                context_parts=final_context_parts, 
+                query_vec=ctx.query_vector,
+                query_text=ctx.query_text,
+                candidates=all_candidates, 
                 current_path=[root.name]
             )
 
-            return RetrievalResult(
-                candidates="\n".join(final_context_parts)
-            )
+            if not all_candidates:
+                return []
+
+            # BM25 scoring across all collected candidates
+            bm25 = BM25Scorer()
+            docs = [f"{c['name']} {c['description']}" for c in all_candidates]
+            bm25.fit(docs)
+            
+            for i, c in enumerate(all_candidates):
+                c['bm25_score'] = bm25.score(ctx.query_text, i)
+
+            # Combined score for ranking (weighted average)
+            for c in all_candidates:
+                c['combined'] = (c['sim_score'] * 0.6) + (c['bm25_score'] * 0.4)
+
+            # Sort by combined score, take top-k
+            all_candidates.sort(key=lambda x: x['combined'], reverse=True)
+            top_k = all_candidates[:self.config.top_k]
+
+            # Convert to CandidateTopic (strip description — only name+scores go to refiner)
+            results = []
+            for c in top_k:
+                results.append(CandidateTopic(
+                    name=c['name'],
+                    path=c['path'],
+                    topic_id=c['topic_id'],
+                    sim_score=round(c['sim_score'], 3),
+                    bm25_score=round(c['bm25_score'], 3),
+                    timestamp=c['timestamp'],
+                    is_leaf=c['is_leaf']
+                ))
+            
+            return results
 
         finally:
             session.close()
 
-    def _recursive_scan(self, session, node, query_vec, context_parts, current_path):
+    def _recursive_collect(self, session, node, query_vec, query_text, candidates, current_path):
+        """Recursively collect scored candidates from the topic tree."""
         children = node.children
         if not children:
             return
 
-        scored_children = []
         for child in children:
-            if child.embedding is None: continue
+            if child.embedding is None:
+                continue
+            
             child_vec = self.db_manager._from_blob(child.embedding)
-            score = self.bridge._cosine_similarity(query_vec, child_vec)
-            scored_children.append((score, child))
-        
-        scored_children.sort(key=lambda x: x[0], reverse=True)
-
-        for score, child in scored_children:
-            child_path = current_path + [child.name]
-            path_str = " > ".join(child_path)
-
-            if score >= self.config.threshold:
-                context_parts.append(f"Current Topic {child.name} Path {path_str} score {float(score):.3f}")
-                self._recursive_scan(session, child, query_vec, context_parts, child_path)
-            else:
-                pass
+            sim_score = self.bridge._cosine_similarity(query_vec, child_vec)
+            
+            if sim_score >= self.config.descent_threshold:
+                child_path = current_path + [child.name]
+                path_str = " > ".join(child_path)
+                ts = child.timestamp.strftime('%Y-%m-%d %H:%M') if child.timestamp else "?"
+                is_leaf = not bool(child.children)
+                
+                candidates.append({
+                    'name': child.name,
+                    'path': path_str,
+                    'topic_id': child.id,
+                    'sim_score': float(sim_score),
+                    'bm25_score': 0.0,  # Filled after BM25 fit
+                    'description': child.description or "",  # Used for BM25 only, not sent to refiner
+                    'timestamp': ts,
+                    'is_leaf': is_leaf
+                })
+                
+                # Continue descending
+                self._recursive_collect(session, child, query_vec, query_text, candidates, child_path)

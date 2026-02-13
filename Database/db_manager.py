@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import func
 from Database.db_setup import engine, init_db, ProcessingJob, Topic, TriadBlock, UserMemory, EpisodicMemory, KnowledgeMemory, DecisionMemory, MemoryRegistry
+from Database.decision_analyzer import DecisionStateAnalyzer
 
 class DatabaseManager:
     def __init__(self):
@@ -107,6 +108,7 @@ class DatabaseManager:
 
     def save_extracted_memory(self, job_id, raw_msg, extracted_data):
         session = self.Session()
+        decision_topic_ids = set()  # Track topics that received new decisions
         try:
             topics_root = extracted_data.get("topics_root", [])
             memory_buckets = extracted_data.get("memory", [])
@@ -133,7 +135,7 @@ class DatabaseManager:
                 type_map = {
                     "user": (UserMemory, "user"),
                     "fact": (KnowledgeMemory, "knowledge"),
-                    "epis": (EpisodicMemory, "episodic"),
+                    "episodic": (EpisodicMemory, "episodic"),
                     "decision": (DecisionMemory, "decision"),
                 }
 
@@ -156,12 +158,32 @@ class DatabaseManager:
                         )
                         session.add(atom)
 
+                        # Track if this was a decision
+                        if m_type == "decision":
+                            decision_topic_ids.add(topic_leaf_node.id)
+
             job = session.query(ProcessingJob).get(job_id)
             if job:
                 session.delete(job)
 
             session.commit()
             print(f"[DB] Success! Job {job_id} ")
+
+            # --- CHAIN: Decision State Analyzer ---
+            if decision_topic_ids:
+                print(f"[DB] New decisions detected. Running Decision Analyzer for {len(decision_topic_ids)} topic(s)...")
+                analyzer = DecisionStateAnalyzer()
+                analysis_session = self.Session()
+                try:
+                    for tid in decision_topic_ids:
+                        analyzer.analyze(analysis_session, tid)
+                    analysis_session.commit()
+                    print(f"[DB] Decision analysis complete.")
+                except Exception as e:
+                    analysis_session.rollback()
+                    print(f"[DB Error] Decision Analyzer: {e}")
+                finally:
+                    analysis_session.close()
 
         except Exception as e:
             session.rollback()

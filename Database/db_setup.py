@@ -78,7 +78,6 @@ class BaseMemory(Base):
     __abstract__ = True
     id = Column(Integer, ForeignKey('memory_registry.id'), primary_key=True)
     content = Column(String)
-    confidence = Column(Float, nullable=True)
     timestamp = Column(DateTime, default=datetime.now)
     
     @declared_attr

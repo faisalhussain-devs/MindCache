@@ -52,6 +52,7 @@ Your output must be VALID JSON matching the provided schema exactly.
 - Do not include markdown formatting (```json ... ```). 
 - Do not include explanations outside the JSON object.
 """
+
 class Memory_Extractor():
     def __init__(self, model_name="qwen3-fast", sys_prompt=SYSTEM_PROMPT):
         self.engine = SafeAI(model_name=model_name)

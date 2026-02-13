@@ -7,17 +7,18 @@ class RetrievalConfig:
     """Configuration for the Active Path Retrieval System"""
     # Context Bridge (Phase 1)
     drift_threshold: float = 0.5
-    max_msg_length: int = 500 # Characters
-    min_msg_length: int = 100
+    short_threshold_1: int = 200   # Max chars for current prompt to include n-1
+    short_threshold_2: int = 400   # Max chars for (current+n-1) to include n-2
     
-    # Root Dictionary Search (Phase 2)
+    # Root Search (Phase 2)
     root_selection_threshold: float = 0.35 
     
     # Root Descent (Phase 3)
-    threshold: float = 0.35 
+    descent_threshold: float = 0.35 
+    top_k: int = 7  # Max candidates to send to refiner
     
     # Agentic Refiner (Phase 4)
-    model_name: str = "qwen3-fast" # Model for refinement
+    model_name: str = "qwen3-fast"
 
 @dataclass
 class RetrievalContext:
@@ -36,15 +37,29 @@ class RetrievalContext:
     history_used: List[str] = field(default_factory=list) 
 
 @dataclass
-class RetrievalResult:
-    """Standardized output from the retrieval system"""
-    candidates: str # The final candidates string
+class CandidateTopic:
+    """Single candidate from Root Descent"""
+    name: str
+    path: str              # "Backend > Database > Migrations"
+    topic_id: int
+    sim_score: float
+    bm25_score: float
+    timestamp: str         # Formatted timestamp
+    is_leaf: bool
 
-# --- LLM OUTPUT SCHEMA ---
-class SelectedItem(BaseModel):
-    topic_name: str
-    reason: str
+@dataclass
+class RetrievalResult:
+    """Final output from the retrieval system"""
+    context: str = ""
+    selected_topics: list = field(default_factory=list)
+
+# --- LLM OUTPUT SCHEMAS ---
+
+class SelectedTopic(BaseModel):
+    chain: List[str] = Field(..., description="Topic path chain e.g. ['Backend', 'Database']")
+    depth: str = Field(..., description="'summary' or 'leaf'")
+    reason: str = Field(default="", description="Why this topic was selected")
 
 class RefinedSelection(BaseModel):
     reasoning: str = Field(..., description="Analysis of what information is needed")
-    selected_items: List[SelectedItem] = Field(..., description="List of specific IDs to retrieve")
+    selected_topics: List[SelectedTopic] = Field(..., description="Topics to retrieve with depth")
