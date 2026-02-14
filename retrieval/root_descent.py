@@ -83,10 +83,8 @@ class RootDescent:
 
             # Collect ALL matching nodes recursively
             self._recursive_collect(
-                session=session,
                 node=root, 
                 query_vec=ctx.query_vector,
-                query_text=ctx.query_text,
                 candidates=all_candidates, 
                 current_path=[root.name]
             )
@@ -100,11 +98,10 @@ class RootDescent:
             bm25.fit(docs)
             
             for i, c in enumerate(all_candidates):
-                c['bm25_score'] = bm25.score(ctx.query_text, i)
-
-            # Combined score for ranking (weighted average)
-            for c in all_candidates:
-                c['combined'] = (c['sim_score'] * 0.6) + (c['bm25_score'] * 0.4)
+                bm25_score = bm25.score(ctx.query_text, i)
+                c['bm25_score'] = bm25_score
+                # Combined score for ranking (weighted average)
+                c['combined'] = (c['sim_score'] * 0.6) + (bm25_score * 0.4)
 
             # Sort by combined score, take top-k
             all_candidates.sort(key=lambda x: x['combined'], reverse=True)
@@ -128,7 +125,7 @@ class RootDescent:
         finally:
             session.close()
 
-    def _recursive_collect(self, session, node, query_vec, query_text, candidates, current_path):
+    def _recursive_collect(self, node, query_vec, candidates, current_path):
         """Recursively collect scored candidates from the topic tree."""
         children = node.children
         if not children:
@@ -159,4 +156,4 @@ class RootDescent:
                 })
                 
                 # Continue descending
-                self._recursive_collect(session, child, query_vec, query_text, candidates, child_path)
+                self._recursive_collect(child, query_vec, candidates, child_path)

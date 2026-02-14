@@ -2,7 +2,7 @@ import os
 from Memory_extract.memory_extractor import Memory_Extractor
 from Memory_extract.input_denoiser import InputDenoiser
 from Database.db_manager import DatabaseManager
-from Database.db_setup import ProcessingJob, TriadBlock, Memory, Topic
+from Database.db_setup import ProcessingJob, TriadBlock, Topic, DecisionMemory
 from Database.nodes_summary import RecursiveSummarizer
 from Database.embedder import run_embedding_job
 
@@ -38,7 +38,6 @@ def run_test(inputs):
     
     try:
         session.query(ProcessingJob).delete()
-        session.query(Memory).delete()
         session.query(TriadBlock).delete()
         session.query(Topic).delete()
         session.commit()

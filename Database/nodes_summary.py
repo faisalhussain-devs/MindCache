@@ -19,104 +19,157 @@ class RecursiveSummarizer:
     def get_leaf_summary(self, session, topic_id, min_timestamp=0):
         """
         Fetches memories for this topic across all 4 memory types.
-        Returns a dict: { "YYYY-MM-DD HH:MM": { "global_id": "[Type] content", ... }, ... }
-        Ordered chronologically by insertion order.
+        Returns a dict with two keys:
+          "memories": { "YYYY-MM-DD HH:MM": { id: "[Type] content", ... } }
+          "decisions": { "YYYY-MM-DD HH:MM": { id: "[Decision:status] content | Context: reasoning", ... } }
+        Memories ordered by timestamp. Decisions ordered by last_validated_at.
         """
-        memory_models = [
+        # --- Non-decision memories (ordered by timestamp) ---
+        non_decision_models = [
             (EpisodicMemory, 'Episodic'),
             (UserMemory, 'User'),
             (KnowledgeMemory, 'Knowledge'),
-            (DecisionMemory, 'Decision')
         ]
 
         min_dt = datetime.fromtimestamp(min_timestamp) if min_timestamp > 0 else datetime.min
 
         raw_entries = []
-        for Model, type_name in memory_models:
+        for Model, type_name in non_decision_models:
             query = session.query(Model).filter(Model.topic_id == topic_id)
             if min_timestamp > 0:
                 query = query.filter(Model.timestamp > min_dt)
-            
             for mem in query.all():
                 if mem.content:
                     raw_entries.append((
                         mem.timestamp if mem.timestamp else datetime.min,
-                        mem.id,  # Global registry ID
+                        mem.id,
                         type_name,
                         mem.content
                     ))
 
-        if not raw_entries:
-            return {}
-
-        raw_entries.sort(key=lambda x: x[0])
-
-        summary_dict = {}
+        memories_dict = {}
         for ts, mem_id, mem_type, content in raw_entries:
             ts_key = ts.strftime('%Y-%m-%d %H:%M')
-            if ts_key not in summary_dict:
-                summary_dict[ts_key] = {}
-            summary_dict[ts_key][mem_id] = f"[{mem_type}] {content}"
+            if ts_key not in memories_dict:
+                memories_dict[ts_key] = {}
+            memories_dict[ts_key][mem_id] = f"[{mem_type}] {content}"
 
-        return summary_dict
+        # --- Decision memories (ordered by last_validated_at) ---
+        dec_query = session.query(DecisionMemory).filter(
+            DecisionMemory.topic_id == topic_id
+        ).order_by(DecisionMemory.last_validated_at.desc())
+        if min_timestamp > 0:
+            dec_query = dec_query.filter(DecisionMemory.last_validated_at > min_dt)
 
-    def _format_leaf_summary(self, summary_dict, latest_first=True):
+        decisions_dict = {}
+        for dec in dec_query.all():
+            if not dec.content:
+                continue
+            # Use last_validated_at as the timestamp key
+            ts = dec.last_validated_at or dec.timestamp or datetime.min
+            ts_key = ts.strftime('%Y-%m-%d %H:%M')
+            if ts_key not in decisions_dict:
+                decisions_dict[ts_key] = {}
+            
+            ctx = f" | Context: {dec.context}" if dec.context else ""
+            decisions_dict[ts_key][dec.id] = f"[Decision:{dec.status}] {dec.content}{ctx}"
+
+        if not memories_dict and not decisions_dict:
+            return {}
+
+        return {"memories": memories_dict, "decisions": decisions_dict}
+
+    def _format_leaf_summary(self, summary_data, latest_first=True):
         """
-        Converts the leaf summary dict into a readable string for LLM prompts.
-        If latest_first=True, reverses the timestamp order.
+        Converts the leaf summary data into a readable string for LLM prompts.
+        Handles both old format (flat dict) and new format ({memories, decisions}).
         """
-        if not summary_dict:
+        if not summary_data:
             return ""
         
-        keys = list(summary_dict.keys())
-        if latest_first:
-            keys = reversed(keys)
-
-        lines = []
-        for ts_key in keys:
-            memories = summary_dict[ts_key]
-            for mem_id, content in memories.items():
-                lines.append(f"[{ts_key}] (#{mem_id}) {content}")
-        
-        return "\n".join(lines)
+        # Handle new format with separate memories and decisions
+        if isinstance(summary_data, dict) and ("memories" in summary_data or "decisions" in summary_data):
+            memories_dict = summary_data.get("memories", {})
+            decisions_dict = summary_data.get("decisions", {})
+            
+            lines = []
+            
+            # Format regular memories
+            if memories_dict:
+                if latest_first:
+                    mem_keys = sorted(list(memories_dict.keys()), reverse=True)
+                else:
+                    mem_keys = sorted(list(memories_dict.keys()))
+                for ts_key in mem_keys:
+                    for mem_id, content in memories_dict[ts_key].items():
+                        lines.append(f"[{ts_key}] (#{mem_id}) {content}")
+            
+            # Format decisions separately
+            if decisions_dict:
+                lines.append("\n== DECISIONS ==")
+                if latest_first:
+                    dec_keys = sorted(list(decisions_dict.keys()), reverse=True)
+                else:
+                    dec_keys = sorted(list(decisions_dict.keys()))
+                for ts_key in dec_keys:
+                    for dec_id, content in decisions_dict[ts_key].items():
+                        lines.append(f"[validated: {ts_key}] (#{dec_id}) {content}")
+            
+            return "\n".join(lines)
 
     def process_leaf(self, session, node):
         """
         Leaf Node: 
-        1. Summary = JSON dict { timestamp: { global_id: "[Type] content" } }
-        2. Description = 
-           - IF Empty: Generate from scratch (from all memories).
-           - IF Exists: Incremental Update (Old Desc + New memories).
+        1. Summary = JSON { "memories": {...}, "decisions": {...} }
+        2. Description = generated/updated from all memories + decisions w/ status+context
         """
         # Load existing summary state
-        existing_summary = {}
+        existing_summary = {"memories": {}, "decisions": {}}
         try:
             if node.summary and node.summary.startswith("{"):
-                existing_summary = json.loads(node.summary)
-        except:
-            existing_summary = {}
+                parsed = json.loads(node.summary)
+                if "memories" in parsed or "decisions" in parsed:
+                    existing_summary = parsed
+                else:
+                    raise ValueError("Error: Invalid summary format")
+        except Exception as e:
+            print(f"Error: {e}")
+            existing_summary = {"memories": {}, "decisions": {}}
 
         last_ts = 0
         if node.timestamp:
             last_ts = node.timestamp.timestamp()
-        new_memories = self.get_leaf_summary(session, node.id, min_timestamp=last_ts)
+        new_data = self.get_leaf_summary(session, node.id, min_timestamp=last_ts)
 
+        if not new_data:
+            return
+
+        new_memories = new_data.get("memories", {})
+        new_decisions = new_data.get("decisions", {})
+
+        # Merge memories
         for ts_key, mem_dict in new_memories.items():
-            if ts_key not in existing_summary:
-                existing_summary[ts_key] = {}
-            existing_summary[ts_key].update(mem_dict)
+            if ts_key not in existing_summary["memories"]:
+                existing_summary["memories"][ts_key] = {}
+            existing_summary["memories"][ts_key].update(mem_dict)
+
+        # Merge decisions (unchanged ones retain old last_validated_at and won't be re-fetched)
+        for ts_key, dec_dict in new_decisions.items():
+            if ts_key not in existing_summary["decisions"]:
+                existing_summary["decisions"][ts_key] = {}
+            existing_summary["decisions"][ts_key].update(dec_dict)
         
         node.summary = json.dumps(existing_summary)
 
-        full_text = self._format_leaf_summary(existing_summary)
-        new_text = self._format_leaf_summary(new_memories)
+        new_text = self._format_leaf_summary(new_data)
 
         if not node.description:
             print(f"  [Leaf] Init Description for '{node.name}'")
-            if full_text:
+            if new_text:
                 desc_prompt = f"""
                 Create a description for the following information.
-                Information: {full_text[:5000]}
+                Note: Decisions include their current status and reasoning context.
+                Information: {new_text[:5000]}
                 Output ONLY the concise description suitable for retrieval.
                 """
                 new_desc = self.extractor.summary_extract(desc_prompt)
@@ -126,6 +179,7 @@ class RecursiveSummarizer:
             print(f"  [Leaf] Updating Description for '{node.name}'")
             desc_prompt = f"""
             Update the following description with new information.
+            Note: Decisions include their status (active/superseded/etc.) and context reasoning.
             Current Description: {node.description}   
             New Information: {new_text[:3000]}
             Output ONLY the updated concise description suitable for retrieval.
@@ -142,9 +196,8 @@ class RecursiveSummarizer:
         - Summary: JSON Blob { "source_map": { "id": "Contextual Summary" }, "ignored_ids": [id...] }
         """
         children = node.children
+        if not children: return
         sorted_children = sorted(children, key=lambda x: x.timestamp or datetime.min, reverse=True)
-        if not sorted_children: return
-
         try:
             if node.summary and node.summary.startswith("{"):
                 state = json.loads(node.summary)
@@ -157,14 +210,12 @@ class RecursiveSummarizer:
         ignored_ids = set(state.get("ignored_ids", []))
         
         updates = []  
-        
+        node_ts = node.timestamp or datetime.min
+
         for child in sorted_children:
             child_ts = child.timestamp or datetime.min
-            node_ts = node.timestamp or datetime.min
-            
             if child_ts > node_ts:
                 status = "EXISTING_SOURCE" if str(child.id) in source_map else ("IGNORED" if child.id in ignored_ids else "NEW")
-                
                 child_content = ""
                 if not child.children:
                     try:
@@ -206,7 +257,7 @@ class RecursiveSummarizer:
             {{
               "source_map": {{ "45": "Recursion error fixed in main loop.", ... }},
               "ignored_ids": [46, 47],
-              "description": "A concise description..."
+              "description": "A concise, keyword-rich description for Topic '{node.name}' based on these key points."
             }}
             """
             
@@ -295,7 +346,6 @@ class RecursiveSummarizer:
             
         except Exception as e:
             print(f"  [Parent] Error parsing LLM response for '{node.name}': {e}")
-            # print(f"Raw Response: {response_json}") 
 
     def run(self):
         session = self.Session()

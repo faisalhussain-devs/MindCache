@@ -114,8 +114,10 @@ class SafeAI:
                         time.sleep(ECO_SLEEP)  # 0.15s
                     else:
                         time.sleep(BASE_SLEEP) # 0.05s
+            clean_json = full_response.replace("<think>", "").replace("</think>", "")
+            clean_json = self.clean_json(clean_json)
 
-            return full_response
+            return clean_json
 
         except Exception as e:
             print(f"[SafeAI] Error during generation: {e}")

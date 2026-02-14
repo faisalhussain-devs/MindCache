@@ -65,8 +65,13 @@ class ContextBridge:
             return ctx
         
         # Gate 4: Is n-2 similar to the combined (current + n-1)?
-        combined_vec = self._embed(combined)
-        prev_vec = self._embed(prev_clean)
+
+        vecs = self._embed([combined, prev_clean])
+        if vecs is None or not isinstance(vecs, list) or len(vecs) < 2:
+            ctx.query_vector = self._embed(combined)
+            return ctx
+            
+        combined_vec, prev_vec = vecs[0], vecs[1]
         
         if combined_vec is not None and prev_vec is not None:
             sim_n2 = self._cosine_similarity(combined_vec, prev_vec)

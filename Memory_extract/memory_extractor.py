@@ -66,9 +66,7 @@ class Memory_Extractor():
         if not raw_json:
             return None
         try:
-            raw_json = raw_json.replace("<think>", "").replace("</think>", "")
-            clean_json = self.engine.clean_json(raw_json)
-            validated_data = ChatExtraction.model_validate_json(clean_json)
+            validated_data = ChatExtraction.model_validate_json(raw_json)
             return validated_data.model_dump()
         except Exception as e:
             print(f"[SafeAI] Validation Failed: {e}")

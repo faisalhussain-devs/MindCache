@@ -24,7 +24,7 @@ Your job: Determine the current STATUS of each decision.
 2. Use facts and episodic memories to validate or invalidate decisions.
 3. User preferences always carry extra weight.
 4. Write a clear 1-sentence "context" for EACH decision explaining your reasoning.
-5. All decisions MUST appear in your output — even if its status doesn't change.
+5. decisions MUST appear in your output — only skip if both context and status are already there and there is no need to update them.
 
 ### OUTPUT FORMAT (Strict JSON Array)
 [

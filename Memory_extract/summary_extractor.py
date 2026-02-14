@@ -13,9 +13,7 @@ class Summary_Extractor():
         if not raw_json:
             return None
         try:
-            raw_json = raw_json.replace("<think>", "").replace("</think>", "")
-            clean_json = self.llm.clean_json(raw_json)
-            return clean_json
+            return raw_json
         except Exception as e:
             print(f"[SafeAI] Validation Failed for summary extractor: {e}")
             return None

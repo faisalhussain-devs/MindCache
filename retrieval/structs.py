@@ -8,7 +8,7 @@ class RetrievalConfig:
     # Context Bridge (Phase 1)
     drift_threshold: float = 0.5
     short_threshold_1: int = 200   # Max chars for current prompt to include n-1
-    short_threshold_2: int = 400   # Max chars for (current+n-1) to include n-2
+    short_threshold_2: int = 300   # Max chars for (current+n-1) to include n-2
     
     # Root Search (Phase 2)
     root_selection_threshold: float = 0.35 
@@ -51,10 +51,8 @@ class CandidateTopic:
 class RetrievalResult:
     """Final output from the retrieval system"""
     context: str = ""
-    selected_topics: list = field(default_factory=list)
 
 # --- LLM OUTPUT SCHEMAS ---
-
 class SelectedTopic(BaseModel):
     chain: List[str] = Field(..., description="Topic path chain e.g. ['Backend', 'Database']")
     depth: str = Field(..., description="'summary' or 'leaf'")

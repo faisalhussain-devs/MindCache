@@ -108,7 +108,6 @@ class DatabaseManager:
 
     def save_extracted_memory(self, job_id, raw_msg, extracted_data):
         session = self.Session()
-        decision_topic_ids = set()  # Track topics that received new decisions
         try:
             topics_root = extracted_data.get("topics_root", [])
             memory_buckets = extracted_data.get("memory", [])
@@ -158,36 +157,55 @@ class DatabaseManager:
                         )
                         session.add(atom)
 
-                        # Track if this was a decision
-                        if m_type == "decision":
-                            decision_topic_ids.add(topic_leaf_node.id)
-
             job = session.query(ProcessingJob).get(job_id)
             if job:
                 session.delete(job)
 
             session.commit()
             print(f"[DB] Success! Job {job_id} ")
-
-            # --- CHAIN: Decision State Analyzer ---
-            if decision_topic_ids:
-                print(f"[DB] New decisions detected. Running Decision Analyzer for {len(decision_topic_ids)} topic(s)...")
-                analyzer = DecisionStateAnalyzer()
-                analysis_session = self.Session()
-                try:
-                    for tid in decision_topic_ids:
-                        analyzer.analyze(analysis_session, tid)
-                    analysis_session.commit()
-                    print(f"[DB] Decision analysis complete.")
-                except Exception as e:
-                    analysis_session.rollback()
-                    print(f"[DB Error] Decision Analyzer: {e}")
-                finally:
-                    analysis_session.close()
-
         except Exception as e:
             session.rollback()
             print(f"[DB Error] Save Memory: {e}")
             self.mark_job_status(job_id, "failed")
         finally:
             session.close()
+
+    def run_decision_analyzer(self):
+        """
+        Background job: finds decisions that haven't been analyzed yet
+        (no context or no last_validated_at) and runs the analyzer per topic.
+        Can be called anytime — fully decoupled from save_extracted_memory.
+        """
+        session = self.Session()
+        try:
+            unanalyzed = (
+                session.query(DecisionMemory.topic_id)
+                .filter(
+                    (DecisionMemory.context.is_(None)) | 
+                    (DecisionMemory.last_validated_at.is_(None))
+                )
+                .distinct()
+                .all()
+            )
+            
+            topic_ids = [row[0] for row in unanalyzed if row[0] is not None]
+            
+            if not topic_ids:
+                print("[DecisionAnalyzer] No unanalyzed decisions found.")
+                return
+            
+            print(f"[DecisionAnalyzer] Found {len(topic_ids)} topic(s) with unanalyzed decisions.")
+            analyzer = DecisionStateAnalyzer()
+            
+            for tid in topic_ids:
+                analyzer.analyze(session, tid)
+            
+            session.commit()
+            print(f"[DecisionAnalyzer] Complete.")
+            
+        except Exception as e:
+            session.rollback()
+            print(f"[DB Error] Decision Analyzer: {e}")
+        finally:
+            session.close()
+
