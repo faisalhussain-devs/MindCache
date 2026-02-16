@@ -372,11 +372,9 @@ class RecursiveSummarizer:
         print("\n[Summarizer] Rollup Complete.")
         session.close()
 
-def main():
-    job = DatabaseManager()
-    job.run_decision_state_analyzer()
-    job = RecursiveSummarizer()
-    job.run()
+    def main(self):
+        job = DatabaseManager()
+        job.run_decision_state_analyzer()
+        job = RecursiveSummarizer()
+        job.run()
 
-if __name__ == "__main__":
-    main()

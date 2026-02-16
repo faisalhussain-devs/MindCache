@@ -71,7 +71,7 @@ class SafeAI:
             print(f"[SafeAI] Cooling down... Waiting for: {', '.join(issues)}")
             time.sleep(5)
 
-    def generate(self, prompt, system_prompt=None, json_schema: dict | None = None,):
+    def generate(self, prompt, system_prompt=None, json_schema: dict | None = None):
         """
         Generates text using 'Dynamic Duty Cycling'.
         It pulses the CPU (Work -> Sleep -> Work) to prevent overheating.
@@ -134,7 +134,6 @@ class SafeAI:
 
 
 if __name__ == "__main__":
-    # 1. Initialize SafeAI (This sets priority and env vars)
     ai = SafeAI(model_name="qwen3-fast")
 
     print("Starting Safe Generation...")

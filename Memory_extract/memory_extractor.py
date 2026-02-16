@@ -1,4 +1,4 @@
-from Memory_extract.safe_ai import SafeAI
+from safe_ai import SafeAI
 from Memory_extract.schema import ChatExtraction
 SYSTEM_PROMPT = f"""You are the MindCache Extraction Engine. Your goal is to read a conversation (User Input + AI Response) and extract permanent information into a strict JSON format.
 

@@ -19,7 +19,7 @@ class SafeAI:
         prompt: str,
         system_prompt: str | None = None,
         temperature: float = 0.1,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
         json_schema: dict | None = None,
         retries: int = 1,
     ):
@@ -33,10 +33,9 @@ class SafeAI:
                 if system_prompt:
                     config.system_instruction = system_prompt
 
-                # Constrained decoding: model can ONLY produce valid schema tokens
                 if json_schema:
                     config.response_mime_type = "application/json"
-                    config.response_schema = json_schema
+                    config.response_schema = self._clean_schema(json_schema)
 
                 response = self.client.models.generate_content(
                     model=self.model_name,
@@ -53,11 +52,49 @@ class SafeAI:
                     return None
 
     @staticmethod
+    def _clean_schema(schema):
+        """
+        Make Pydantic JSON schema compatible with Gemini API.
+        - Resolves $ref pointers by inlining definitions from $defs
+        - Strips additionalProperties, $defs, title (unsupported by Gemini)
+        """
+        defs = schema.get("$defs", {})
+
+        def resolve(node):
+            if isinstance(node, dict):
+                # Replace $ref with the actual definition
+                if "$ref" in node:
+                    ref_path = node["$ref"]  # e.g. "#/$defs/ThinkingStep"
+                    ref_name = ref_path.split("/")[-1]
+                    if ref_name in defs:
+                        return resolve(defs[ref_name])  # Recursively resolve
+                    return node
+
+                return {
+                    k: resolve(v) for k, v in node.items()
+                    if k not in ("additionalProperties", "$defs", "title")
+                }
+            elif isinstance(node, list):
+                return [resolve(item) for item in node]
+            return node
+
+        return resolve(schema)
+
+    @staticmethod
     def _extract_text(response):
-        if hasattr(response, "text") and response.text:
-            return response.text
+        try:
+            if hasattr(response, "text") and response.text:
+                return response.text
+        except Exception:
+            pass
+        
         if response.candidates:
-            return response.candidates[0].content.parts[0].text
+            text_parts = []
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "text") and part.text:
+                    text_parts.append(part.text)
+            if text_parts:
+                return "".join(text_parts)
         return None
 
     @staticmethod

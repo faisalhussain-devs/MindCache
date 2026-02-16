@@ -1,5 +1,5 @@
 from retrieval.structs import RetrievalConfig, RefinedSelection, CandidateTopic
-from Memory_extract.safe_ai import SafeAI
+from safe_ai import SafeAI
 
 SYSTEM_PROMPT = """You are the **Retrieval Refinement Engine** for MindCache, a personal memory database.
 
