@@ -20,7 +20,7 @@ class SafeAI:
         system_prompt: str | None = None,
         temperature: float = 0.1,
         max_tokens: int = 1024,
-        json_mode: bool = False,
+        json_schema: dict | None = None,
         retries: int = 1,
     ):
         for attempt in range(retries):
@@ -33,8 +33,10 @@ class SafeAI:
                 if system_prompt:
                     config.system_instruction = system_prompt
 
-                if json_mode:
+                # Constrained decoding: model can ONLY produce valid schema tokens
+                if json_schema:
                     config.response_mime_type = "application/json"
+                    config.response_schema = json_schema
 
                 response = self.client.models.generate_content(
                     model=self.model_name,

@@ -71,7 +71,7 @@ class SafeAI:
             print(f"[SafeAI] Cooling down... Waiting for: {', '.join(issues)}")
             time.sleep(5)
 
-    def generate(self, prompt, system_prompt=None):
+    def generate(self, prompt, system_prompt=None, json_schema: dict | None = None,):
         """
         Generates text using 'Dynamic Duty Cycling'.
         It pulses the CPU (Work -> Sleep -> Work) to prevent overheating.
@@ -92,9 +92,10 @@ class SafeAI:
                 model=self.model_name, 
                 messages=messages,
                 stream=True,
+                format=json_schema,
                 options={
                     "num_ctx": 4096,  # Keep context low for RAM safety
-                    "temperature": 0.1
+                    "temperature": 0.1,
                 }
             )
 

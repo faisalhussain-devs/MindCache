@@ -1,8 +1,5 @@
 from Memory_extract.safe_ai import SafeAI
 from Memory_extract.schema import ChatExtraction
-
-# Extract the schema from your Pydantic model
-schema_json = ChatExtraction.model_json_schema()
 SYSTEM_PROMPT = f"""You are the MindCache Extraction Engine. Your goal is to read a conversation (User Input + AI Response) and extract permanent information into a strict JSON format.
 
 ### 1. THE EXTRACTION LOGIC
@@ -44,12 +41,8 @@ You must populate the JSON fields following this strict logic:
 - Explicitly store the reasoning behind choices.
 - e.g., "Chose cosine similarity over euclidean distance for better text matching."
 
-### 3. SCHEMA
-{schema_json}
-
-### 4. FINAL INSTRUCTION
-Your output must be VALID JSON matching the provided schema exactly. 
-- Do not include markdown formatting (```json ... ```). 
+### 3. FINAL INSTRUCTION
+Your output must be VALID JSON matching the ChatExtraction schema.
 - Do not include explanations outside the JSON object.
 """
 
@@ -61,7 +54,8 @@ class Memory_Extractor():
     def memory_extract(self, prompt):
         raw_json = self.engine.generate(
             prompt=prompt,
-            system_prompt=self.sys_prompt
+            system_prompt=self.sys_prompt,
+            json_schema=ChatExtraction.model_json_schema()
         )
         if not raw_json:
             return None

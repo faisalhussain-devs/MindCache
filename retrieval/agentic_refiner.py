@@ -1,4 +1,3 @@
-import json
 from retrieval.structs import RetrievalConfig, RefinedSelection, CandidateTopic
 from Memory_extract.safe_ai import SafeAI
 
@@ -35,9 +34,6 @@ You receive a user query and a ranked list of candidate topics found by the retr
 - Use the **exact `id`** from the `[id:N]` prefix of each candidate. Do NOT invent or guess IDs.
 - Build the `chain` array by splitting the candidate's path on ` > ` (e.g., `"VISA > Summer Internship"` → `["VISA", "Summer Internship"]`).
 - Output **strict JSON only** — no markdown, no explanation outside the JSON object.
-
-### OUTPUT SCHEMA
-{schema_json}
 
 ### EXAMPLE
 Given candidates:
@@ -87,10 +83,14 @@ class AgenticRefiner:
         candidates_text = "\n".join(candidate_lines)
 
         schema = RefinedSelection.model_json_schema()
-        sys_prompt = SYSTEM_PROMPT.format(schema_json=json.dumps(schema, indent=2))
         usr_prompt = USER_TEMPLATE.format(query=query, candidates=candidates_text)
 
-        raw_response = self.ai.generate(usr_prompt, system_prompt=sys_prompt)
+        # Constrained decoding: LLM can only produce tokens valid under this schema
+        raw_response = self.ai.generate(
+            usr_prompt,
+            system_prompt=SYSTEM_PROMPT,
+            json_schema=schema
+        )
         if not raw_response:
             return {"reasoning": "Generation failed", "selected_topics": []}
             
