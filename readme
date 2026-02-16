@@ -1,4 +1,0 @@
-Modify the node summariser for just updation from last time stamp
-Added timestamps for node too.
-Every node has 2 summaries first detailed and second one concise for retreival lookup of database.
-the second summary has info what is contained below this code about what exactly ?

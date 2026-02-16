@@ -1,8 +1,8 @@
 from Memory_extract.safe_ai import SafeAI
 
 class Summary_Extractor():
-    def __init__(self, sys_prompt=None, model_name="qwen3-fast"):
-        self.llm = SafeAI(model_name=model_name)
+    def __init__(self, sys_prompt=None):
+        self.llm = SafeAI()
         self.sys_prompt = sys_prompt
 
     def summary_extract(self, prompt):

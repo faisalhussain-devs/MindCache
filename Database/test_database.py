@@ -2,7 +2,7 @@ import os
 from Memory_extract.memory_extractor import Memory_Extractor
 from Memory_extract.input_denoiser import InputDenoiser
 from Database.db_manager import DatabaseManager
-from Database.db_setup import ProcessingJob, TriadBlock, Topic, DecisionMemory
+from Database.db_setup import ProcessingJob, TriadBlock, Topic, DecisionMemory, EpisodicMemory, KnowledgeMemory, UserMemory
 from Database.nodes_summary import RecursiveSummarizer
 from Database.embedder import run_embedding_job
 
@@ -39,6 +39,10 @@ def run_test(inputs):
     try:
         session.query(ProcessingJob).delete()
         session.query(TriadBlock).delete()
+        session.query(DecisionMemory).delete()
+        session.query(EpisodicMemory).delete()
+        session.query(KnowledgeMemory).delete()
+        session.query(UserMemory).delete()
         session.query(Topic).delete()
         session.commit()
         print("Database cleared.\n")
@@ -92,18 +96,29 @@ def run_test(inputs):
         parent_count = session.query(TriadBlock).count()
         print(f"Conversation Turns: {parent_count}")
 
-        # Check Children (Memories)
-        memories = session.query(Memory).all()
-        print(f"\nSaved Memory Atoms ({len(memories)} total):")
+        models = [
+            (EpisodicMemory, "EPISODIC"),
+            (UserMemory, "USER"),
+            (KnowledgeMemory, "KNOWLEDGE"),
+            (DecisionMemory, "DECISION")
+        ]
         
-        for mem in memories:
-            # We can access the related topic name easily via the relationship
-            topic_name = mem.topic.name if mem.topic else "Unknown"
-            print(f" - [{topic_name}] [{mem.type.upper()}]: {mem.content[:50]}...")
+        total_memories = 0
+        print(f"\nSaved Memory Atoms:")
+        
+        for Model, label in models:
+            mems = session.query(Model).all()
+            total_memories += len(mems)
+            for mem in mems:
+                topic_name = mem.topic.name if mem.topic else "Unknown"
+                content = mem.content[:50] if mem.content else "(No Content)"
+                print(f" - [{topic_name}] [{label}]: {content}...")
+
+        print(f"\nTotal Memories: {total_memories}")
 
     finally:
         session.close()
-    recursive_summarizer.run()
+    recursive_summarizer.main()
     run_embedding_job()
     
 

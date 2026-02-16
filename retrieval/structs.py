@@ -54,9 +54,9 @@ class RetrievalResult:
 
 # --- LLM OUTPUT SCHEMAS ---
 class SelectedTopic(BaseModel):
+    id: int = Field(..., description="Topic ID")
     chain: List[str] = Field(..., description="Topic path chain e.g. ['Backend', 'Database']")
     depth: str = Field(..., description="'summary' or 'leaf'")
-    reason: str = Field(default="", description="Why this topic was selected")
 
 class RefinedSelection(BaseModel):
     reasoning: str = Field(..., description="Analysis of what information is needed")

@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from sqlalchemy import func
 from Database.db_setup import engine, Topic, UserMemory, EpisodicMemory, KnowledgeMemory, DecisionMemory
+from Database.db_manager import DatabaseManager
 from Memory_extract.summary_extractor import Summary_Extractor
 from sqlalchemy.orm import sessionmaker
 
@@ -148,16 +149,18 @@ class RecursiveSummarizer:
         new_decisions = new_data.get("decisions", {})
 
         # Merge memories
-        for ts_key, mem_dict in new_memories.items():
-            if ts_key not in existing_summary["memories"]:
-                existing_summary["memories"][ts_key] = {}
-            existing_summary["memories"][ts_key].update(mem_dict)
+        if new_memories:
+            for ts_key, mem_dict in new_memories.items():
+                if ts_key not in existing_summary["memories"]:
+                    existing_summary["memories"][ts_key] = {}
+                existing_summary["memories"][ts_key].update(mem_dict)
 
         # Merge decisions (unchanged ones retain old last_validated_at and won't be re-fetched)
-        for ts_key, dec_dict in new_decisions.items():
-            if ts_key not in existing_summary["decisions"]:
-                existing_summary["decisions"][ts_key] = {}
-            existing_summary["decisions"][ts_key].update(dec_dict)
+        if new_decisions:
+            for ts_key, dec_dict in new_decisions.items():
+                if ts_key not in existing_summary["decisions"]:
+                    existing_summary["decisions"][ts_key] = {}
+                existing_summary["decisions"][ts_key].update(dec_dict)
         
         node.summary = json.dumps(existing_summary)
 
@@ -369,6 +372,11 @@ class RecursiveSummarizer:
         print("\n[Summarizer] Rollup Complete.")
         session.close()
 
-if __name__ == "__main__":
+def main():
+    job = DatabaseManager()
+    job.run_decision_state_analyzer()
     job = RecursiveSummarizer()
     job.run()
+
+if __name__ == "__main__":
+    main()

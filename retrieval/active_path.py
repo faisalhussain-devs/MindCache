@@ -58,7 +58,6 @@ class ActivePathRetrieval:
             query=ctx.query_text,
             candidates=candidates
         )
-
         selected = refined.get("selected_topics", [])
         if not selected:
             return RetrievalResult(
@@ -71,11 +70,19 @@ class ActivePathRetrieval:
         
         try:
             for item in selected:
+                topic_id = item.get("id")
                 chain = item.get("chain", [])
                 depth = item.get("depth", "summary")
                 
-                # Find the topic node by walking the chain
-                topic = self._find_topic_by_chain(session, chain)
+                # Primary: direct ID lookup (fast, reliable)
+                topic = None
+                if topic_id:
+                    topic = session.query(Topic).get(topic_id)
+                
+                # Fallback: walk chain if ID lookup failed
+                if not topic and chain:
+                    topic = self._find_topic_by_chain(session, chain)
+                
                 if not topic:
                     continue
                 
@@ -100,7 +107,7 @@ class ActivePathRetrieval:
         current = None
         for level, name in enumerate(chain):
             query = session.query(Topic).filter(
-                Topic.name.ilike(name) & Topic.level == level
+                Topic.name.ilike(name), Topic.level == level
             )
             if current:
                 query = query.filter(Topic.parent_id == current.id)

@@ -128,6 +128,10 @@ class DatabaseManager:
                 topics_branch = bucket.get("topics_branch", [])
                 full_chain = topics_root + topics_branch
                 
+                # Validate chain is not empty
+                if not full_chain:
+                    full_chain = ["General"]
+
                 topic_leaf_node = self._get_or_create_topic_path(session, full_chain)
 
                 # Map bucket keys to (MemoryClass, registry_type)
@@ -170,7 +174,7 @@ class DatabaseManager:
         finally:
             session.close()
 
-    def run_decision_analyzer(self):
+    def run_decision_state_analyzer(self):
         """
         Background job: finds decisions that haven't been analyzed yet
         (no context or no last_validated_at) and runs the analyzer per topic.

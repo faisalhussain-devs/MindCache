@@ -1,11 +1,10 @@
 from typing import Optional
 import numpy as np
 from retrieval.structs import RetrievalContext, RetrievalConfig
-from Database.embedder import EmbeddingManager
 from Memory_extract.input_denoiser import InputDenoiser
 
 class ContextBridge:
-    def __init__(self, embedder: EmbeddingManager, config: RetrievalConfig):
+    def __init__(self, embedder, config: RetrievalConfig):
         self.embedder = embedder
         self.config = config
         self.denoiser = InputDenoiser()

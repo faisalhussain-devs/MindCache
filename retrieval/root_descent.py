@@ -4,6 +4,7 @@ from Database.db_setup import Topic
 from Database.db_manager import DatabaseManager
 from retrieval.structs import RetrievalContext, RetrievalConfig, CandidateTopic
 from retrieval.context_bridge import ContextBridge
+import re
 
 class BM25Scorer:
     """Lightweight BM25 scorer for topic name + description."""
@@ -57,7 +58,7 @@ class BM25Scorer:
     def _tokenize(self, text: str) -> list[str]:
         if not text:
             return []
-        return text.lower().split()
+        return re.findall(r"\b\w+\b", text.lower())
 
 
 class RootDescent:

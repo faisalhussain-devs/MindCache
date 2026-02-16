@@ -54,8 +54,8 @@ Your output must be VALID JSON matching the provided schema exactly.
 """
 
 class Memory_Extractor():
-    def __init__(self, model_name="qwen3-fast", sys_prompt=SYSTEM_PROMPT):
-        self.engine = SafeAI(model_name=model_name)
+    def __init__(self, sys_prompt=SYSTEM_PROMPT):
+        self.engine = SafeAI()
         self.sys_prompt = sys_prompt
 
     def memory_extract(self, prompt):
