@@ -8,7 +8,13 @@ venv/
 # AI Models (Don't upload large model files!)
 *.gguf
 *.bin
+*.json
+*.html
+*.wav
+*.png
+*.jpg
 models/
+LLM_CHATS/
 
 # database
 .db
