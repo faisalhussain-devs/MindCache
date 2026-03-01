@@ -1,3 +1,4 @@
+from numba.core.ir import Print
 import json
 from datetime import datetime
 from sqlalchemy import func
@@ -137,10 +138,7 @@ class RecursiveSummarizer:
             print(f"Error: {e}")
             existing_summary = {"memories": {}, "decisions": {}}
 
-        last_ts = 0
-        if node.timestamp:
-            last_ts = node.timestamp.timestamp()
-        new_data = self.get_leaf_summary(session, node.id, min_timestamp=last_ts)
+        new_data = self.get_leaf_summary(session, node.id, min_timestamp=0)
 
         if not new_data:
             return
@@ -148,35 +146,50 @@ class RecursiveSummarizer:
         new_memories = new_data.get("memories", {})
         new_decisions = new_data.get("decisions", {})
 
-        # Merge memories
+        has_new = False
+        delta_memories = {}
+        delta_decisions = {}
+
+        # Merge memories and detect exactly what is new (ID-based instead of time-based)
         if new_memories:
             for ts_key, mem_dict in new_memories.items():
                 if ts_key not in existing_summary["memories"]:
                     existing_summary["memories"][ts_key] = {}
-                existing_summary["memories"][ts_key].update(mem_dict)
+                for mid, content in mem_dict.items():
+                    mid_str = str(mid)
+                    if mid_str not in existing_summary["memories"][ts_key]:
+                        existing_summary["memories"][ts_key][mid_str] = content
+                        if ts_key not in delta_memories: delta_memories[ts_key] = {}
+                        delta_memories[ts_key][mid_str] = content
+                        has_new = True
 
-        # Merge decisions (unchanged ones retain old last_validated_at and won't be re-fetched)
+        # Merge decisions
         if new_decisions:
             for ts_key, dec_dict in new_decisions.items():
                 if ts_key not in existing_summary["decisions"]:
                     existing_summary["decisions"][ts_key] = {}
-                existing_summary["decisions"][ts_key].update(dec_dict)
+                for did, content in dec_dict.items():
+                    did_str = str(did)
+                    if did_str not in existing_summary["decisions"][ts_key] or existing_summary["decisions"][ts_key][did_str] != content:
+                        existing_summary["decisions"][ts_key][did_str] = content
+                        if ts_key not in delta_decisions: delta_decisions[ts_key] = {}
+                        delta_decisions[ts_key][did_str] = content
+                        has_new = True
         
         node.summary = json.dumps(existing_summary)
 
-        new_text = self._format_leaf_summary(new_data)
+        new_text = self._format_leaf_summary({"memories": delta_memories, "decisions": delta_decisions}) if has_new else ""
 
         if not node.description:
             print(f"  [Leaf] Init Description for '{node.name}'")
-            if new_text:
-                desc_prompt = f"""
-                Create a description for the following information.
-                Note: Decisions include their current status and reasoning context.
-                Information: {new_text[:5000]}
-                Output ONLY the concise description suitable for retrieval.
-                """
-                new_desc = self.extractor.summary_extract(desc_prompt)
-                if new_desc: node.description = new_desc
+            desc_prompt = f"""
+            Create a description for the following information.
+            Note: Decisions include their current status and reasoning context.
+            Information: {new_text[:5000]}
+            Output ONLY the concise description suitable for retrieval.
+            """
+            new_desc = self.extractor.summary_extract(desc_prompt)
+            if new_desc: node.description = new_desc
         
         elif new_text:
             print(f"  [Leaf] Updating Description for '{node.name}'")
@@ -189,9 +202,9 @@ class RecursiveSummarizer:
             """
             new_desc = self.extractor.summary_extract(desc_prompt)
             if new_desc: node.description = new_desc
-            
-        node.timestamp = datetime.now()
-        session.add(node)
+        if has_new:
+            node.timestamp = datetime.now()
+            session.add(node)
 
     def process_parent(self, session, node):
         """
@@ -200,6 +213,15 @@ class RecursiveSummarizer:
         """
         children = node.children
         if not children: return
+        
+        if len(children) == 1:
+            child = children[0]
+            node.summary = child.summary
+            node.description = child.description
+            node.timestamp = child.timestamp
+            session.add(node)
+            return
+
         sorted_children = sorted(children, key=lambda x: x.timestamp or datetime.min, reverse=True)
         try:
             if node.summary and node.summary.startswith("{"):
@@ -362,7 +384,6 @@ class RecursiveSummarizer:
 
             for node in nodes:
                 is_leaf = not bool(node.children)
-                
                 if is_leaf:
                     self.process_leaf(session, node)
                 else:
@@ -372,9 +393,11 @@ class RecursiveSummarizer:
         print("\n[Summarizer] Rollup Complete.")
         session.close()
 
-    def main(self):
-        job = DatabaseManager()
-        job.run_decision_state_analyzer()
-        job = RecursiveSummarizer()
-        job.run()
+def main():
+    job = DatabaseManager()
+    job.run_decision_state_analyzer()
+    job = RecursiveSummarizer()
+    job.run()
+
+main()
 

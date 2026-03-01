@@ -36,6 +36,8 @@ class Topic(Base):
     embedding = Column(LargeBinary)
     description = Column(String) # description of the node and its subnodes, helpful for retreival
     timestamp = Column(DateTime, default=datetime.now) 
+    is_groomed = Column(Integer, default=0) # SQLite doesn't have strict boolean, 0=False, 1=True
+    chain_updated_at = Column(DateTime, default=datetime.now)
 
     parent_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
     children = relationship("Topic", 
@@ -48,6 +50,14 @@ class Topic(Base):
     knowledge_memories = relationship("KnowledgeMemory", back_populates="topic")
     decision_memories = relationship("DecisionMemory", back_populates="topic")
 
+class TopicEmbeddingCache(Base):
+    __tablename__ = 'topic_embedding_cache'
+
+    id = Column(Integer, primary_key=True)
+    topic_leaf_id = Column(Integer, ForeignKey('topics.id'), unique=True, index=True)
+    chain_embedding = Column(LargeBinary)
+    last_embedded_at = Column(DateTime, default=datetime.now)
+
 # TABLE 2: THE HISTORY (Time & Source)
 
 class TriadBlock(Base):
@@ -56,6 +66,7 @@ class TriadBlock(Base):
     id = Column(Integer, primary_key=True)             
     timestamp = Column(DateTime, default=datetime.now)
     raw_msg = Column(String)
+    source_session_id = Column(String, nullable=True, index=True)  # Provenance: which session this came from
     generated_episodic = relationship("EpisodicMemory", back_populates="message")
     generated_user = relationship("UserMemory", back_populates="message")
     generated_knowledge = relationship("KnowledgeMemory", back_populates="message")

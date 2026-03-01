@@ -1,4 +1,4 @@
-from safe_ai import SafeAI
+from Memory_extract.safe_ai import SafeAI
 
 class Summary_Extractor():
     def __init__(self, sys_prompt=None):

@@ -44,12 +44,12 @@ class ActivePathRetrieval:
         ctx = self.bridge.process(current_prompt, last_msg, prev_msg)
         
         # Phase 2: Root Search
-        root_node = self.search.scan(ctx)
-        if not root_node:
+        root_nodes = self.search.scan(ctx)
+        if not root_nodes:
             return RetrievalResult(context="No relevant long-term memory found.")
 
         # Phase 3: Root Descent (lean top-k)
-        candidates = self.descent.descend(root_node, ctx)
+        candidates = self.descent.descend(root_nodes, ctx)
         if not candidates:
             return RetrievalResult(context="No matching topics found in descent.")
 

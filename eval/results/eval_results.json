@@ -1,0 +1,372 @@
+{
+  "timestamp": "2026-02-22T04:23:57.130524",
+  "dataset": {
+    "source": "eval/data/longmemeval_m_cleaned.json",
+    "base_index": 0,
+    "base_id": "7161e7e2",
+    "num_injected": 50,
+    "total_questions": 51
+  },
+  "summary": {
+    "total": 6,
+    "pass": 0,
+    "fail": 6,
+    "conflict": 0,
+    "pass_rate": "0.0%",
+    "pass_rate_strict": "0.0%"
+  },
+  "by_question_type": {
+    "single-session-assistant": {
+      "total": 6,
+      "pass": 0,
+      "fail": 6,
+      "conflict": 0
+    }
+  },
+  "extraction_check": {
+    "evidence_captured": 51,
+    "evidence_missed": 0,
+    "capture_rate": "100.0%"
+  },
+  "questions": [
+    {
+      "question_id": "c4f10528",
+      "question_type": "single-session-assistant",
+      "question": "I'm planning to visit Bandung again and I was wondering if you could remind me of the name of that restaurant in Cihampelas Walk that serves a great Nasi Goreng?",
+      "expected": "Miss Bee Providore",
+      "evidence_sessions": [
+        "answer_ultrachat_234453"
+      ],
+      "evidence_captured": true,
+      "retrieved_memories": [
+        {
+          "content": "Is looking for Thai dish recommendations beyond Pad Thai and Green Curry, having recently taken a Thai street food cooking class.",
+          "type": "user",
+          "topic": "Dishes",
+          "source_session": "[\"8fd8d01a\", \"ultrachat_549617\", \"answer_sharegpt_IUWQYGQ_0\", \"b881fa89_1\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Recommended Thai dishes include Som Tam (Papaya Salad), Larb (Meat Salad), Khao Soi (Curried Noodle Soup), Satay (Grilled Meat Skewers), Khao Niew Mamuang (Mango with Sticky Rice), Tom Yum Goong (Spicy Shrimp Soup), Massaman Curry, Khao Pad (Fried Rice), Tod Mun (Deep-Fried Fish Cakes), and Khanom Buang (Thai Crepe).",
+          "type": "knowledge",
+          "topic": "Dishes",
+          "source_session": "[\"8fd8d01a\", \"ultrachat_549617\", \"answer_sharegpt_IUWQYGQ_0\", \"b881fa89_1\"]",
+          "source_type": "injected"
+        }
+      ],
+      "root_found": [
+        "ThaiCuisine",
+        "Recipes"
+      ],
+      "grade": "fail",
+      "latency_s": 8.933346033096313
+    },
+    {
+      "question_id": "89527b6b",
+      "question_type": "single-session-assistant",
+      "question": "I'm going back to our previous conversation about the children's book on dinosaurs. Can you remind me what color was the scaly body of the Plesiosaur in the image?",
+      "expected": "The Plesiosaur had a blue scaly body.",
+      "evidence_sessions": [
+        "answer_sharegpt_YkWn1Ne_0"
+      ],
+      "evidence_captured": true,
+      "retrieved_memories": [],
+      "root_found": [],
+      "grade": "fail",
+      "latency_s": 0.5362260341644287
+    },
+    {
+      "question_id": "e9327a54",
+      "question_type": "single-session-assistant",
+      "question": "I'm planning to revisit Orlando. I was wondering if you could remind me of that unique dessert shop with the giant milkshakes we talked about last time?",
+      "expected": "The Sugar Factory at Icon Park.",
+      "evidence_sessions": [
+        "answer_ultrachat_480665"
+      ],
+      "evidence_captured": true,
+      "retrieved_memories": [],
+      "root_found": [
+        "Food"
+      ],
+      "grade": "fail",
+      "latency_s": 0.5979316234588623
+    },
+    {
+      "question_id": "4c36ccef",
+      "question_type": "single-session-assistant",
+      "question": "Can you remind me of the name of the romantic Italian restaurant in Rome you recommended for dinner?",
+      "expected": "Roscioli",
+      "evidence_sessions": [
+        "answer_ultrachat_448704"
+      ],
+      "evidence_captured": true,
+      "retrieved_memories": [
+        {
+          "content": "I want recommendations for local restaurants or cafes in Iona.",
+          "type": "user",
+          "topic": "Restaurants",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "I want to know which Iona dining places have outdoor seating.",
+          "type": "user",
+          "topic": "Restaurants",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "I want to know which Iona dining places have the best selection of vegan options.",
+          "type": "user",
+          "topic": "Restaurants",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Highly-rated dining establishments in Iona include The St. Columba Hotel Restaurant, Martyrs Bay Restaurant, The Oran Mor Cafe & Craft Shop, The Iona Community Shop and Café, The Argyll Hotel Restaurant, Baile Mhàrtainn Tearoom and Craft Shop, Columba Hotel Bar, The Pink Shop Café, Fionnphort Tearoom, and Columba's Kitchen.",
+          "type": "knowledge",
+          "topic": "Restaurants",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Dining establishments in Iona with outdoor seating options are Martyrs Bay Restaurant, The Oran Mor Cafe & Craft Shop, The Iona Community Shop and Café, Baile Mhàrtainn Tearoom and Craft Shop, Columba Hotel Bar, The Pink Shop Café, and Fionnphort Tearoom.",
+          "type": "knowledge",
+          "topic": "Restaurants",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Dining establishments in Iona with good vegan options are The Oran Mor Cafe & Craft Shop, The Iona Community Shop and Café, Baile Mhàrtainn Tearoom and Craft Shop, The Pink Shop Café, and Fionnphort Tearoom.",
+          "type": "knowledge",
+          "topic": "Restaurants",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Asks for the best way to serve Massaman curry with Som Tam and other dishes at a dinner party (together on one plate or separately).",
+          "type": "user",
+          "topic": "Serving",
+          "source_session": "[\"8fd8d01a\", \"ultrachat_549617\", \"answer_sharegpt_IUWQYGQ_0\", \"b881fa89_1\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Serving options for a Thai dinner party include: Family-Style Service (dishes in center, guests serve themselves), Individual Plates (each dish served separately), and Thai-Style Service (dishes together on a single plate with steamed rice). Considerations include variety of dishes, ensuring portions, and creating an immersive experience.",
+          "type": "knowledge",
+          "topic": "Serving",
+          "source_session": "[\"8fd8d01a\", \"ultrachat_549617\", \"answer_sharegpt_IUWQYGQ_0\", \"b881fa89_1\"]",
+          "source_type": "injected"
+        }
+      ],
+      "root_found": [
+        "Entertaining",
+        "Travel",
+        "Food"
+      ],
+      "grade": "fail",
+      "latency_s": 0.3722193241119385
+    },
+    {
+      "question_id": "6ae235be",
+      "question_type": "single-session-assistant",
+      "question": "I remember you told me about the refining processes at CITGO's three refineries earlier. Can you remind me what kind of processes are used at the Lake Charles Refinery?",
+      "expected": "Atmospheric distillation, fluid catalytic cracking (FCC), alkylation, and hydrotreating.",
+      "evidence_sessions": [
+        "answer_sharegpt_IUWQYGQ_0"
+      ],
+      "evidence_captured": true,
+      "retrieved_memories": [
+        {
+          "content": "CITGO operates three refineries in the US. Lake Charles, LA: Atmospheric distillation, Fluid catalytic cracking (FCC), Alkylation, Hydrotreating. Lemont, IL: Atmospheric distillation, Delayed coking, Hydrocracking, Hydrotreating. Corpus Christi, TX: Atmospheric distillation, Fluid catalytic cracking (FCC), Alkylation, Hydrocracking, Hydrotreating.",
+          "type": "knowledge",
+          "topic": "Refining Processes",
+          "source_session": "[\"8fd8d01a\", \"ultrachat_549617\", \"answer_sharegpt_IUWQYGQ_0\", \"b881fa89_1\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Recommendations to increase refinery yield include: process optimization (operating conditions, temperature, pressure, catalysts), upgrading equipment (distillation column, catalytic cracking unit), utilizing advanced technologies (computer modeling/simulation, advanced process control), improving feedstock quality, implementing waste reduction strategies (recycling, emissions reduction, alternative waste uses), and continuous monitoring/analysis. Additional recommendations: improving energy efficiency (heat recovery, reducing energy-intensive operations), enhancing product quality (new formulations, purity), enhancing refinery operations (safety, reliability, maintenance), utilizing by-product streams (converting waste to saleable products/fuel), investing in R&D, and collaborating with stakeholders (customers, suppliers, regulators).",
+          "type": "knowledge",
+          "topic": "Yield Optimization",
+          "source_session": "[\"8fd8d01a\", \"ultrachat_549617\", \"answer_sharegpt_IUWQYGQ_0\", \"b881fa89_1\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Ways to improve cat cracker yield include: optimization of operating conditions (temperature, pressure, catalysts, feed rates), selection of appropriate catalysts, feedstock selection (type and quality), reducing coke formation (optimizing catalyst-to-oil ratio, anti-coking additives, coke removal systems), preventative maintenance, and process modeling/simulation.",
+          "type": "knowledge",
+          "topic": "Catalytic Cracking",
+          "source_session": "[\"8fd8d01a\", \"ultrachat_549617\", \"answer_sharegpt_IUWQYGQ_0\", \"b881fa89_1\"]",
+          "source_type": "injected"
+        }
+      ],
+      "root_found": [
+        "OilAndGas"
+      ],
+      "grade": "fail",
+      "latency_s": 0.5578992366790771
+    },
+    {
+      "question_id": "7e00a6cb",
+      "question_type": "single-session-assistant",
+      "question": "I'm planning my trip to Amsterdam again and I was wondering, what was the name of that hostel near the Red Light District that you recommended last time?",
+      "expected": "International Budget Hostel",
+      "evidence_sessions": [
+        "answer_ultrachat_370515"
+      ],
+      "evidence_captured": true,
+      "retrieved_memories": [
+        {
+          "content": "I am planning a trip to Chicago for a conference next month.",
+          "type": "user",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "The conference is at McCormick Place.",
+          "type": "user",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "I need a hotel near McCormick Place with free Wi-Fi and a fitness center.",
+          "type": "user",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "My budget for the hotel is around $150 per night.",
+          "type": "user",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "I selected the Hyatt Regency McCormick Place.",
+          "type": "user",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "I want to know about the neighborhood around the Hyatt Regency McCormick Place (safety, restaurants, cafes).",
+          "type": "user",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Recommended hotels near McCormick Place within budget ($130-$150) with free Wi-Fi and fitness center include Hyatt Regency McCormick Place, Marriott Marquis Chicago, The Blackstone Hotel, Hilton Garden Inn Chicago McCormick Place, and JW Marriott Chicago.",
+          "type": "knowledge",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Hyatt Regency McCormick Place is connected to McCormick Place via an enclosed walkway.",
+          "type": "knowledge",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "The South Loop neighborhood around Hyatt Regency McCormick Place is considered safe.",
+          "type": "knowledge",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Restaurants near Hyatt Regency McCormick Place include The Polo Cafe (24-hour diner), Baderbräu Brewing Company (German-inspired pub fare), Lou Mitchell's (breakfast/lunch), The Berghoff (historic German), and Starbucks.",
+          "type": "knowledge",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Nearby attractions include Willis Tower and Millennium Park (20-minute walk).",
+          "type": "knowledge",
+          "topic": "Hotels",
+          "source_session": "[\"da828711\", \"3c15770d_1\", \"d0a41222_1\", \"193c23bd_1\", \"ultrachat_260845\", \"answer_ultrachat_519486\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "The Mystic Falls Trailhead is located about 1.5 miles north of Old Faithful.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "To get to Mystic Falls Trailhead from Old Faithful, take Grand Loop Road north towards Upper Geyser Basin, then turn left onto Mystic Falls Road.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "To get to Mystic Falls Trailhead from Madison Junction, take Grand Loop Road south towards Old Faithful, then turn right onto Mystic Falls Road.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Yellowstone National Park offers a free shuttle service during the summer season (late May to early October) that stops at the Mystic Falls Trailhead.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Commercial shuttle services like Xanterra Parks & Resorts and Yellowstone Tour & Travel offer transportation to Mystic Falls Trailhead.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Yellowstone National Park offers free, ranger-led guided tours during the summer season, which can include the Mystic Falls Trailhead.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "Commercial tour companies (e.g., Xanterra Parks & Resorts, Yellowstone Tour & Travel) offer guided tours to the Mystic Falls Trailhead.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "It is recommended to check the park's website for up-to-date trail information, shuttle schedules, and tour availability.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "During peak season, the trailhead parking lot can fill up quickly, so arriving early is advised.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        },
+        {
+          "content": "It is essential to carry bear spray and know how to use it when in Yellowstone National Park due to grizzly bears.",
+          "type": "knowledge",
+          "topic": "Transportation",
+          "source_session": "[\"cb24e5d5_1\", \"db771e79_1\", \"sharegpt_UGg8d44_9\", \"1deb2c3b\"]",
+          "source_type": "injected"
+        }
+      ],
+      "root_found": [
+        "Travel"
+      ],
+      "grade": "fail",
+      "latency_s": 0.6059844493865967
+    }
+  ]
+}

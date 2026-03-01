@@ -73,10 +73,55 @@ class DatabaseManager:
         finally:
             session.close()
             
-    def _get_or_create_topic_path(self, session, chain):
+    _embedder = None
+
+    @classmethod
+    def _get_embedder(cls):
+        """Load embedding model once, reuse across all saves."""
+        if cls._embedder is None:
+            from Database.embedder import EmbeddingManager
+            cls._embedder = EmbeddingManager()
+        return cls._embedder
+
+    def _semantic_match(self, name, siblings):
+        """
+        Find the best semantic match for `name` among existing `siblings`.
+        Returns the matching Topic if similarity > threshold, else None.
+        """
+        SIMILARITY_THRESHOLD = 0.75
+        if not siblings:
+            return None
+
+        embedder = self._get_embedder()
+        sibling_names = [s.name for s in siblings]
+        
+        # Embed new name + all sibling names in one batch
+        all_texts = [name] + sibling_names
+        vectors = embedder.get_batch_embeddings(all_texts)
+        
+        new_vec = vectors[0]
+        sibling_vecs = vectors[1:]
+        
+        # Cosine similarity (vectors are already normalized)
+        similarities = np.dot(sibling_vecs, new_vec)
+        best_idx = np.argmax(similarities)
+        best_score = similarities[best_idx]
+
+        if best_score >= SIMILARITY_THRESHOLD:
+            matched = siblings[best_idx]
+            print(f"[TopicNorm] Merged '{name}' → '{matched.name}' (sim: {best_score:.2f})")
+            return matched
+        return None
+
+    def _get_or_create_topic_path(self, session, chain, job_timestamp=None):
         """
         Takes a list like ['MindCache', 'Backend', 'Database']
         Walks the tree. Creates missing nodes. Returns the Leaf Topic.
+        
+        At each level:
+          1. Exact match (case-insensitive) → reuse
+          2. Semantic match (cosine sim > 0.75) → reuse existing sibling
+          3. No match → create new node
         """
         if not chain:
             chain = ["General"] # Fallback
@@ -94,21 +139,59 @@ class DatabaseManager:
             
             current_node = query.first()
 
+            # Step 2: Semantic fallback — check siblings for near-synonyms
+            if not current_node:
+                if parent_node:
+                    siblings = session.query(Topic).filter(Topic.parent_id == parent_node.id).all()
+                else:
+                    siblings = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
+                
+                current_node = self._semantic_match(name, siblings)
+
+            # Step 3: Create new node if no match found
             if not current_node:
                 current_node = Topic(
                     name=name,
                     level=level,
-                    parent=parent_node # Sets parent_id automatically
+                    parent=parent_node,
+                    timestamp=job_timestamp if job_timestamp else datetime.now()
                 )
                 session.add(current_node)
-                session.flush() # CRITICAL: Get ID immediately for next loop
+                session.flush()
             
             parent_node = current_node 
         return current_node
 
-    def save_extracted_memory(self, job_id, raw_msg, extracted_data):
+    def get_topic_tree_hints(self, max_depth=2):
+        """
+        Returns a formatted string of existing topic paths for prompt grounding.
+        Lightweight: just queries root + first two levels.
+        """
         session = self.Session()
         try:
+            roots = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
+            if not roots:
+                return ""
+            
+            lines = []
+            for root in roots:
+                lines.append(root.name)
+                for child in root.children:
+                    lines.append(f"  {child.name}")
+                    if max_depth > 1:
+                        for grandchild in child.children:
+                            lines.append(f"    {grandchild.name}")
+            
+            return "\n".join(lines)
+        finally:
+            session.close()
+
+    def save_extracted_memory(self, job_id, raw_msg, extracted_data, source_session_id=None):
+        session = self.Session()
+        try:
+            job = session.query(ProcessingJob).get(job_id)
+            job_timestamp = job.timestamp if job else datetime.now()
+
             topics_root = extracted_data.get("topics_root", [])
             memory_buckets = extracted_data.get("memory", [])
             
@@ -120,7 +203,8 @@ class DatabaseManager:
 
             new_message = TriadBlock(
                 raw_msg=raw_msg, 
-                timestamp=datetime.now()
+                timestamp=job_timestamp,
+                source_session_id=source_session_id
             )
             session.add(new_message)
             session.flush()
@@ -132,7 +216,7 @@ class DatabaseManager:
                 if not full_chain:
                     full_chain = ["General"]
 
-                topic_leaf_node = self._get_or_create_topic_path(session, full_chain)
+                topic_leaf_node = self._get_or_create_topic_path(session, full_chain, job_timestamp=job_timestamp)
 
                 # Map bucket keys to (MemoryClass, registry_type)
                 type_map = {
@@ -153,15 +237,25 @@ class DatabaseManager:
                         session.add(reg)
                         session.flush()  # Get the global ID
 
-                        atom = MemoryClass(
-                            id=reg.id,
-                            content=text,
-                            topic=topic_leaf_node,
-                            message=new_message
-                        )
+                        if MemoryClass == DecisionMemory:
+                            atom = MemoryClass(
+                                id=reg.id,
+                                content=text,
+                                topic=topic_leaf_node,
+                                message=new_message,
+                                timestamp=job_timestamp,
+                                last_validated_at=job_timestamp
+                            )
+                        else:
+                            atom = MemoryClass(
+                                id=reg.id,
+                                content=text,
+                                topic=topic_leaf_node,
+                                message=new_message,
+                                timestamp=job_timestamp
+                            )
                         session.add(atom)
 
-            job = session.query(ProcessingJob).get(job_id)
             if job:
                 session.delete(job)
 

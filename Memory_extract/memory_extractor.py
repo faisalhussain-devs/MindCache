@@ -1,6 +1,8 @@
-from safe_ai import SafeAI
+from Memory_extract.safe_ai import SafeAI
 from Memory_extract.schema import ChatExtraction
-SYSTEM_PROMPT = f"""You are the MindCache Extraction Engine. Your goal is to read a conversation (User Input + AI Response) and extract permanent information into a strict JSON format.
+from Database.db_manager import DatabaseManager
+
+SYSTEM_PROMPT = """You are the MindCache Extraction Engine. Your goal is to read a conversation (User Input + AI Response) and extract permanent information into a strict JSON format.
 
 ### 1. THE EXTRACTION LOGIC
 You must populate the JSON fields following this strict logic:
@@ -22,38 +24,53 @@ You must populate the JSON fields following this strict logic:
 
 [topics_branch] -> "Sub-Folder Routing"
 - The specific sub-path for this memory bucket.
-- Example: If root is ["MindCache"], branch might be ["Database", "Migrations"].
+- Example: If root is ["Travel", "Florida"], branch might be ["Orlando", "Dining"].
+- **IMPORTANT:** If existing topics are listed below, reuse those exact names when they match what you're extracting.
 
-[USER] -> "Preferences & Bio"
-- "Who they are" & "How they want me to behave".
-- e.g., "I prefer Python," "Don't use code blocks," "I live in Berlin."
+[USER] -> "Preferences & Profile"
+- "Who they are", "What they like", and "Experiences they've had".
+- e.g., "I plan to visit Bandung," "I prefer quiet hotels," "I have three dogs."
 
-[FACT] -> "Universal Truths & Constraints"
-- **CRITICAL:** Store technical constraints, code logic, and project decisions here.
-- If user says: "I switched to SQLite because MongoDB was heavy,"
-- FACT: "Constraint: SQLite is preferred over MongoDB due to memory weight."
+[FACT] -> "Entities, Facts & Specifics"
+- **CRITICAL:** Store concrete information: names, places, processes, technical details, or specific recommendations mentioned in the chat.
+- If the chat mentions: "The Sugar Factory at Icon Park has giant milkshakes."
+- FACT: "Entity: The Sugar Factory is located at Icon Park and is known for giant milkshakes."
+- This is the most important bucket for answering factual recall questions later.
 
-[EPIS] -> "The Narrative"
-- A brief log of *actions* taken in this specific turn.
-- e.g., "User provided the initial schema," "AI debugged the connection error."
+[EPIS] -> "The Narrative & Context"
+- A brief log of *what happened* or *what was discussed* in this specific turn.
+- e.g., "AI explained refining processes at CITGO's Lake Charles Refinery," "User asked for dessert recommendations in Orlando."
 
 [DECISION] -> "The Why"
-- Explicitly store the reasoning behind choices.
-- e.g., "Chose cosine similarity over euclidean distance for better text matching."
+- Explicitly store the reasoning behind choices or recommendations made during the chat.
+- e.g., "Recommended The Sugar Factory because user specifically asked for unique, large desserts."
 
 ### 3. FINAL INSTRUCTION
 Your output must be VALID JSON matching the ChatExtraction schema.
 - Do not include explanations outside the JSON object.
 """
 
+GROUNDING_TEMPLATE = """
+
+### EXISTING TOPICS (reuse these exact names when applicable)
+{topic_tree}
+"""
+
 class Memory_Extractor():
     def __init__(self, sys_prompt=SYSTEM_PROMPT):
         self.engine = SafeAI()
         self.sys_prompt = sys_prompt
+        self._db = DatabaseManager()
 
     def memory_extract(self, prompt):
+        # Inject existing topic tree into prompt for grounding
+        final_prompt = prompt
+        topic_hints = self._db.get_topic_tree_hints()
+        if topic_hints:
+            final_prompt = prompt + GROUNDING_TEMPLATE.format(topic_tree=topic_hints)
+
         raw_json = self.engine.generate(
-            prompt=prompt,
+            prompt=final_prompt,
             system_prompt=self.sys_prompt,
             json_schema=ChatExtraction.model_json_schema()
         )

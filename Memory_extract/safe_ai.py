@@ -2,6 +2,7 @@ import os
 import re
 from google import genai
 from google.genai import types
+import time
 
 DEFAULT_MODEL = "gemini-2.5-flash"
 
@@ -19,7 +20,7 @@ class SafeAI:
         prompt: str,
         system_prompt: str | None = None,
         temperature: float = 0.1,
-        max_tokens: int = 4096,
+        max_tokens: int = 16384,
         json_schema: dict | None = None,
         retries: int = 1,
     ):
@@ -43,6 +44,7 @@ class SafeAI:
                     config=config,
                 )
 
+                time.sleep(8)
                 raw_text = self._extract_text(response)
                 return self.clean_json(raw_text) if raw_text else None
 
