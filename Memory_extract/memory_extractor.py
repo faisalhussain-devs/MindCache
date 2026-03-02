@@ -62,7 +62,7 @@ class Memory_Extractor():
         self.sys_prompt = sys_prompt
         self._db = DatabaseManager()
 
-    def memory_extract(self, prompt):
+    def memory_extract(self, prompt=""):
         # Inject existing topic tree into prompt for grounding
         final_prompt = prompt
         topic_hints = self._db.get_topic_tree_hints()

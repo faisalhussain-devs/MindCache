@@ -10,13 +10,14 @@ from pydantic import BaseModel, Field
 from typing import List, Union, Optional
 
 class ReorganizedNode(BaseModel):
-    id: Union[int, str] = Field(description="The original integer ID of the messy node, or 'NEW_Root' if creating a brand new root.")
-    name: str = Field(description="The exact name of the category.")
-    parent_id: Optional[Union[int, str]] = Field(description="The ID of this node's new parent from the Groomed Branches, or null/None if it's a new root, or 'NEW_Root'.")
-    merged_into_id: Optional[int] = Field(default=None, description="If this exact messy node is a duplicate of a node already inside the Groomed Branches, enter the integer ID of the existing groomed node it should be merged into. Otherwise null.")
+    id: Union[int, str] = Field(description="Original ID of the node.")
+    name: Optional[str] = Field(default=None, description="OMIT THIS KEY if the name is not changing. Only include if renaming the category.")
+    parent_id: Optional[Union[int, str]] = Field(default=None, description="OMIT THIS KEY if the parent is not changing. Only include if re-parenting. Use 'NEW_Root' for a new root.")
+    merged_into_id: Optional[int] = Field(default=None, description="OMIT THIS KEY if the node is not being merged. Only include if merging into another ID.")
 
 class TreeReorganizationSchema(BaseModel):
-    nodes: List[ReorganizedNode] = Field(description="The reorganized messy nodes.")
+    modified_nodes_only: List[ReorganizedNode] = Field(description="ONLY include nodes that require a change (e.g., merging, newly assigned parent, or renamed). Do NOT include nodes that are already correctly placed and need no changes.")
+
 
 TOKEN_LIMIT = 3000
 
@@ -89,15 +90,12 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
         print("Failed to get LLM response.")
         return
     try:
+        print(len(raw_json))
         data = json.loads(raw_json)
-        nodes_data = data.get("nodes", [])
+        nodes_data = data.get("modified_nodes_only", [])
+        print(len(nodes_data))
     except json.JSONDecodeError as e:
-        print(f"JSON Error: {e}\nRaw output:\n{raw_json}")
-        return
-    if dry_run:
-        print("\n[DRY RUN] Proposed mappings:")
-        for n in nodes_data:
-            print(f"  ID {n['id']} | Name: '{n['name']}' | Parent: {n.get('parent_id')} | MergeInto: {n.get('merged_into_id')}")
+        print(f"JSON Error: {e}\n{raw_json}")
         return
         
     existing_nodes = session.query(Topic).all()
@@ -180,26 +178,30 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
         if not db_node:
             continue
         
-        db_node.name = n_data["name"]
+        # Only update if the key is explicitly returned
+        if "name" in n_data and n_data["name"] is not None:
+            db_node.name = n_data["name"]
+        
         db_node.is_groomed = 1
         db_node.chain_updated_at = datetime.now()
         
-        pid = n_data.get("parent_id")
-        if isinstance(pid, str):
-            pid_key = pid.lower()
-            if pid_key in new_parents_db:
-                db_node.parent_id = new_parents_db[pid_key].id
-        elif pid is not None:
-            try:
-                pid_int = int(pid)
-                if pid_int in node_map and not _would_create_cycle(node_map, node_id, pid_int):
-                    db_node.parent_id = node_map[pid_int].id
-                elif pid_int == node_id:
-                    print(f"  SKIPPED self-parent for node {node_id}")
-            except (TypeError, ValueError):
-                pass
-        else:
-            db_node.parent_id = None
+        if "parent_id" in n_data:
+            pid = n_data["parent_id"]
+            if isinstance(pid, str):
+                pid_key = pid.lower()
+                if pid_key in new_parents_db:
+                    db_node.parent_id = new_parents_db[pid_key].id
+            elif pid is not None:
+                try:
+                    pid_int = int(pid)
+                    if pid_int in node_map and not _would_create_cycle(node_map, node_id, pid_int):
+                        db_node.parent_id = node_map[pid_int].id
+                    elif pid_int == node_id:
+                        print(f"  SKIPPED self-parent for node {node_id}")
+                except (TypeError, ValueError):
+                    pass
+            else:
+                db_node.parent_id = None
             
         successfully_mapped_nodes.append(db_node)
 
@@ -251,16 +253,19 @@ def pass_global_bootstrap(session, full_tree_text, dry_run=True):
     ai = SafeAI()
     embedder = EmbeddingManager()
     
-    system_prompt = "You are an expert taxonomist. Group duplicates into single categories using merged_into_id, create logical links via parent_id to flatten the tree. Output valid JSON."
+    system_prompt = "You are an expert taxonomist restructuring a messy category tree into a clean, well-organized taxonomy. Output valid JSON."
     
     prompt = f"""
-    You are an expert taxonomist structuring a category graph.
+    You are an expert taxonomist. Restructure the messy category graph below into a clean taxonomy.
     
-    RULES:
-    1. OUTPUT AN ENTRY FOR EVERY SINGLE ID IN 'ALL NODES'.
+    STRUCTURAL RULES:
+    1. STRICT OMISSION: ONLY OUTPUT NODES THAT NEED CHANGES. If a node is fine, omit it entirely. If a specific property (name/parent/merge) doesn't change, DO NOT OUTPUT THAT KEY (no nulls!).
     2. MERGING: If there are exact duplicate nodes across branches, choose one as primary, and set the secondary node's `merged_into_id` to the primary ID.
-    3. STRUCTURING: You MUST assign a valid integer ID to `parent_id` matching a logical parent node.
-    4. If it's a completely newly discovered root-level concept, set parent_id to a new string like "NEW_General".
+    4. NO EMPTY WRAPPER ROOTS: Do NOT create artificial top-level wrapper nodes (like "NEW_root_shopping" -> "Shopping"). Instead, elevate existing broad category nodes (like "Shopping") to be the root by setting their `parent_id` to `null`. Only create a `NEW_` root if absolutely no existing node covers the concept.
+    5. DEPTH OF TREES SHOULD DEPEND ON THE REQUIREMENT OF THE TREE WHETHER SHORT WILL SUFFICE IF IT WONT THEN ONLY EXTEND TO MAINTAIN THE LOGICAL FLOW OF THE TREE.
+    6. NO NAME REPETITION: A child must NEVER have the same name as its parent or grandparent. If "Books" already exists as a parent, do NOT create another "Books" child under it — merge into the existing one.
+    7. BREAK CHIMERA CHAINS: If a single branch contains unrelated topics forced together (e.g., "Dog Agility → Environmental Science → Geology"), split them into separate root-level branches. Each root should represent ONE coherent domain.
+    8. FLATTEN REDUNDANT WRAPPERS: Remove single-child intermediary nodes that add no semantic value. E.g., "Sleep → Morning Routine → Sleep → Sleep → Morning Routine" should become "Sleep → Morning Routine".
     
     ALL NODES:
     {full_tree_text}
@@ -329,7 +334,7 @@ def pass_targeted_vector(session, dry_run=True, top_k=3):
     
     ai = SafeAI()
     embedder = EmbeddingManager()
-    system_prompt = "You are an expert taxonomist. Map messy new chains into the semantic neighborhoods of existing groomed branches. Output JSON."
+    system_prompt = "You are an expert taxonomist. Integrate messy branches into groomed branches: merge duplicates, break chimera chains, enforce max depth of 4, and eliminate name repetition. Output valid JSON."
     
     # 1. Rebuild and fetch Groomed Matrix (The Haystack)
     groomed_matrix, groomed_ids = rebuild_groomed_cache(session, embedder)
@@ -427,18 +432,22 @@ def pass_targeted_vector(session, dry_run=True, top_k=3):
         print(f"\n-> Grooming {len(batch_messy_texts)} messy chains (~{batch_token_count} tokens) against {len(batch_groomed_root_ids)} groomed branches...")
         
         prompt = f"""
-        You are an expert taxonomist. Your task is to look at new, messy category branches and seamlessly re-parent them into the existing, high-quality semantic branches provided.
+        You are an expert taxonomist. Integrate messy branches into the existing groomed tree.
         
-        RULES:
-        1. OUTPUT AN ENTRY FOR EVERY SINGLE ID IN 'NEW MESSY BRANCHES TO GROOM'.
-        2. MERGING: If a node in the messy branch is a duplicate of a node in the EXISTING GROOMED BRANCHES, set `merged_into_id` to the existing Groomed ID.
-        3. RE-PARENTING: Re-parent the new messy chains into the EXISTING GROOMED BRANCHES by setting `parent_id`.
-        4. If it's a completely newly discovered root-level concept unlike the existing branches, set parent_id to a new string like "NEW_General".
+        STRUCTURAL RULES:
+        1. STRICT OMISSION: ONLY OUTPUT NODES THAT NEED CHANGES. If a node is fine, omit it. If a specific property (name/parent/merge) doesn't change, DO NOT OUTPUT THAT KEY (no nulls!).
+        2. DEPTH OF TREES SHOULD DEPEND ON THE REQUIREMENT OF THE TREE WHETHER SHORT WILL SUFFICE IF IT WONT THEN ONLY EXTEND TO MAINTAIN THE LOGICAL FLOW OF THE TREE.
+        3. NO NAME REPETITION: Never place a node under a parent with the same or near-identical name. Merge duplicates using `merged_into_id`.
+        4. BREAK CHIMERA CHAINS: If a messy branch mixes unrelated topics (e.g., "Healthcare → Music → Dance"), split them — re-parent each topic segment into its correct groomed branch independently.
+        5. MERGING: If a messy node duplicates an existing groomed node, set `merged_into_id` to the groomed node's ID.
+        6. RE-PARENTING: Place each messy node under the most semantically appropriate existing groomed parent.
+        7. FLATTEN: Skip single-child wrapper nodes that add no meaning.
+        8. NEW ROOTS: Only if a topic is genuinely new and has no match in groomed branches, set parent_id to a string like "NEW_TopicName".
         
-        EXISTING GROOMED BRANCHES (Read-only semantic neighborhoods):
+        EXISTING GROOMED BRANCHES (Read-only — do NOT modify these, only reference their IDs as parents or merge targets):
         {groomed_context_text}
         
-        NEW MESSY BRANCHES TO GROOM (Merge and specify parents):
+        NEW MESSY BRANCHES TO GROOM:
         {"".join(batch_messy_texts)}
         """
         
@@ -467,7 +476,5 @@ def reorganize_tree(dry_run=True):
         print("\nAll grooming completed successfully.")
 
 if __name__ == "__main__":
-    is_dry_run = "--apply" not in sys.argv
-    if is_dry_run:
-        print("NOTE: Running in DRY-RUN mode. Pass '--apply' to physically alter the database.")
-    reorganize_tree(dry_run=is_dry_run)
+    dry_run = False
+    reorganize_tree(dry_run=dry_run)

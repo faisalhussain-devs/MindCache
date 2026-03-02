@@ -3,10 +3,10 @@ from sqlalchemy.orm import sessionmaker
 from Database.db_setup import engine
 from Database.db_manager import DatabaseManager
 from Database.nodes_summary import RecursiveSummarizer
-from Database.reorganize_tree import reorganize_tree, repair_cycles
+from reorganize_tree import reorganize_tree, repair_cycles
 from Database.embedder import run_embedding_job
 
-COOLDOWN_SECONDS = 30
+COOLDOWN_SECONDS = 100
 
 def _run_step(name, fn):
     """Wraps a job in try/except so one failure doesn't kill the pipeline."""

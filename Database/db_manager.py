@@ -88,7 +88,7 @@ class DatabaseManager:
         Find the best semantic match for `name` among existing `siblings`.
         Returns the matching Topic if similarity > threshold, else None.
         """
-        SIMILARITY_THRESHOLD = 0.75
+        SIMILARITY_THRESHOLD = 0.99
         if not siblings:
             return None
 
@@ -186,11 +186,19 @@ class DatabaseManager:
         finally:
             session.close()
 
-    def save_extracted_memory(self, job_id, raw_msg, extracted_data, source_session_id=None):
+    def save_extracted_memory(self, job_id, raw_msg, extracted_data, source_session_id=None, session_timestamp=None):
         session = self.Session()
         try:
+            # Timestamp priority: session_timestamp (dataset) > job.timestamp > now()
             job = session.query(ProcessingJob).get(job_id)
-            job_timestamp = job.timestamp if job else datetime.now()
+            if session_timestamp:
+                from dateutil.parser import parse as parse_dt
+                try:
+                    ts = parse_dt(session_timestamp) if isinstance(session_timestamp, str) else session_timestamp
+                except Exception:
+                    ts = datetime.now()
+            else:
+                ts = job.timestamp if job else datetime.now()
 
             topics_root = extracted_data.get("topics_root", [])
             memory_buckets = extracted_data.get("memory", [])
@@ -200,10 +208,10 @@ class DatabaseManager:
                 session.execute(text("DELETE FROM processing_queue WHERE id=:id"), {"id": job_id})
                 session.commit()
                 return
-
+            
             new_message = TriadBlock(
                 raw_msg=raw_msg, 
-                timestamp=job_timestamp,
+                timestamp=ts,
                 source_session_id=source_session_id
             )
             session.add(new_message)
@@ -211,12 +219,11 @@ class DatabaseManager:
             for bucket in memory_buckets:
                 topics_branch = bucket.get("topics_branch", [])
                 full_chain = topics_root + topics_branch
-                
                 # Validate chain is not empty
                 if not full_chain:
                     full_chain = ["General"]
 
-                topic_leaf_node = self._get_or_create_topic_path(session, full_chain, job_timestamp=job_timestamp)
+                topic_leaf_node = self._get_or_create_topic_path(session, full_chain, job_timestamp=ts)
 
                 # Map bucket keys to (MemoryClass, registry_type)
                 type_map = {
@@ -243,8 +250,8 @@ class DatabaseManager:
                                 content=text,
                                 topic=topic_leaf_node,
                                 message=new_message,
-                                timestamp=job_timestamp,
-                                last_validated_at=job_timestamp
+                                timestamp=ts,
+                                last_validated_at=ts
                             )
                         else:
                             atom = MemoryClass(
@@ -252,7 +259,7 @@ class DatabaseManager:
                                 content=text,
                                 topic=topic_leaf_node,
                                 message=new_message,
-                                timestamp=job_timestamp
+                                timestamp=ts
                             )
                         session.add(atom)
 

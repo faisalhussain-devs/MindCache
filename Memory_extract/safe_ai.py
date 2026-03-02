@@ -6,21 +6,35 @@ import time
 
 DEFAULT_MODEL = "gemini-2.5-flash"
 
+class AllKeysExhaustedError(Exception):
+    pass
+
 class SafeAI:
     def __init__(self, model_name=DEFAULT_MODEL):
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise EnvironmentError("GEMINI_API_KEY not set.")
-
-        self.client = genai.Client(api_key=api_key)
+        keys_env = os.environ.get("GEMINI_API_KEYS")
+        if keys_env:
+            self.keys = [k.strip() for k in keys_env.split(",") if k.strip()]
+        else:
+            single_key = os.environ.get("GEMINI_API_KEY")
+            if not single_key:
+                raise EnvironmentError("GEMINI_API_KEYS or GEMINI_API_KEY not set.")
+            self.keys = [single_key.strip()]
+            
+        self.current_key_idx = 0
         self.model_name = model_name
+        self._init_client()
+
+    def _init_client(self):
+        current_key = self.keys[self.current_key_idx]
+        self.client = genai.Client(api_key=current_key)
+        print(f"[SafeAI] Initialized client with Key {self.current_key_idx + 1}/{len(self.keys)} ending in ...{current_key[-4:] if len(current_key) > 4 else ''}")
 
     def generate(
         self,
         prompt: str,
         system_prompt: str | None = None,
         temperature: float = 0.1,
-        max_tokens: int = 16384,
+        max_tokens: int = 32000,
         json_schema: dict | None = None,
         retries: int = 1,
     ):
@@ -49,6 +63,19 @@ class SafeAI:
                 return self.clean_json(raw_text) if raw_text else None
 
             except Exception as e:
+                error_msg = str(e).lower()
+                # Catch 429 Too Many Requests or 403 Resource Exhausted
+                if "429" in error_msg or "403" in error_msg or "exhausted" in error_msg or "quota" in error_msg:
+                    print(f"[SafeAI] API Error: Quota exhausted or rate limited ({error_msg}).")
+                    if self.current_key_idx < len(self.keys) - 1:
+                        self.current_key_idx += 1
+                        print(f"[SafeAI] Switching to next API key ({self.current_key_idx + 1}/{len(self.keys)}).")
+                        self._init_client()
+                        continue # Retry immediately with the new key without counting against normal retries
+                    else:
+                        print(f"[SafeAI] FATAL: All {len(self.keys)} provided API keys have been exhausted.")
+                        raise AllKeysExhaustedError("All provided API keys trigger quota/exhaustion errors.")
+                        
                 if attempt == retries - 1:
                     print(f"[SafeAI] Failed after retries: {e}")
                     return None
