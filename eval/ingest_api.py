@@ -46,8 +46,7 @@ This conversation is part of a memory benchmark test. A question will later ask 
 
 [USER] → Preferences, profile, personal details.
   - Names, relationships, preferences, habits, plans, experiences.
-  - e.g., "User's name is Alex," "User plans to visit Bandung in March,"
-    "User has 3 dogs," "User prefers window seats."
+  - e.g., "User's name is Alex and they are planning a three-week trip to Bandung in March. They will be traveling with their 3 dogs and specifically prefer booking window seats on flights because it helps them sleep."
 
 [FACT] → EVERY concrete detail. This is the most critical bucket.
   - Names of people, places, businesses, products, tools.
@@ -55,11 +54,11 @@ This conversation is part of a memory benchmark test. A question will later ask 
   - Processes: how things work, step-by-step procedures.
   - Relationships: who works where, what connects to what.
   - Specific recommendations and their details.
-  - e.g., "The Sugar Factory is at Icon Park, Orlando, known for giant milkshakes."
-  - e.g., "Admon works the 8am-4pm Day Shift on Sundays."
-  - e.g., "CITGO's Lake Charles Refinery processes 425,000 barrels/day."
-  - DO NOT summarize multiple facts into one. Keep them SEPARATE and GRANULAR.
-  - One fact = one specific piece of information.
+  - e.g., "The Sugar Factory is located at Icon Park in Orlando. It is highly recommended for its giant, over-the-top milkshakes and vibrant, instagrammable aesthetic, making it a popular tourist destination for desserts."
+  - e.g., "Admon is currently scheduled to work the Day Shift, which runs from 8:00 AM to 4:00 PM, specifically on Sundays. He prefers this shift because it allows him to spend evenings with his family."
+  - e.g., "CITGO's Lake Charles Refinery is a massive industrial complex that processes approximately 425,000 barrels of crude oil per day, making it one of the largest refineries in the region."
+  - CRITICAL: Write LONG, rich, cohesive paragraphs that tell the full story. Group ALL related details about a person, place, or concept into a SINGLE massive text block.
+  - DO NOT break related information into isolated, context-less pieces or short sentences. Combine them!
 
 [EPIS] → What happened / what was discussed.
   - Log the narrative: "User asked about shift schedules," "AI provided restaurant list."
@@ -69,9 +68,9 @@ This conversation is part of a memory benchmark test. A question will later ask 
 
 ### CRITICAL INSTRUCTIONS
 1. Extract MORE rather than less. When in doubt, EXTRACT IT.
-2. Keep facts GRANULAR — one fact per string entry, not combined paragraphs.
-3. Include specific names, numbers, dates, and identifiers — never generalize them away.
-4. If a list is mentioned (e.g., schedule, menu items, steps), extract EACH item separately.
+2. PRESERVE CONTEXT — keep related information together in cohesive paragraphs or natural sentences; do not artificially split them into standalone context-less atomic facts.
+3. Include specific names, numbers, dates, and identifiers — integrate them naturally into the descriptive paragraph.
+4. If a list is mentioned (e.g., schedule, menu items, steps), keep the listed items together in one cohesive entry unless they belong to completely different topics.
 5. Your output must be VALID JSON matching the ChatExtraction schema.
 """
 

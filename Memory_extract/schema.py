@@ -18,18 +18,22 @@ class MemoryData(BaseModel):
     
     user: List[str] = Field(
         default_factory=list, 
+        description="A list of long, comprehensive paragraphs. Each item should be a rich, multi-sentence text block grouping all related user profile details together."
     )
     
     fact: List[str] = Field(
         default_factory=list, 
+        description="A list of LONG, cohesive paragraphs. DO NOT use short atomic sentences. Each item must be a fully developed, multi-sentence paragraph combining all related facts, names, numbers, and context into a single narrative block."
     )
     
     epis: List[str] = Field(
         default_factory=list, 
+        description="A list of descriptive, contextual paragraphs summarizing the narrative of the conversation."
     )
 
     decision: List[str] = Field(
         default_factory=list, 
+        description="A list of detailed paragraphs explaining the reasoning and context behind decisions or recommendations."
     )
 
     class Config:

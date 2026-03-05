@@ -34,11 +34,12 @@ class SafeAI:
         prompt: str,
         system_prompt: str | None = None,
         temperature: float = 0.1,
-        max_tokens: int = 32000,
+        max_tokens: int = 64000,
         json_schema: dict | None = None,
         retries: int = 1,
     ):
         for attempt in range(retries):
+            
             try:
                 config = types.GenerateContentConfig(
                     temperature=temperature,

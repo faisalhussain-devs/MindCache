@@ -4,7 +4,7 @@ import subprocess
 import time
 
 def get_master_keys():
-    keys_env = os.environ.get("GEMINI_MASTER_KEYS")
+    keys_env = os.environ.get("GEMINI_API_KEYS")
     if not keys_env:
         # Fallback to see if they just have GEMINI_API_KEYS
         keys_env = os.environ.get("GEMINI_API_KEYS")

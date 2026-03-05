@@ -4,17 +4,12 @@ from Database.db_setup import engine, Topic
 def print_tree(node, prefix=""):
     """Recursively print the topic tree"""
 
-    if node.level == 0:
-        mem = ""
-        if not node.children:
-            mem = f" ({len(node.episodic_memories) + len(node.user_memories) + len(node.knowledge_memories) + len(node.decision_memories)} memories)"
-        print(f"[{node.level}] {node.name}{mem}")
-    elif not node.children:
-        total_memories = len(node.episodic_memories) + len(node.user_memories) + len(node.knowledge_memories) + len(node.decision_memories)
-        print(f"{prefix}└── [{node.level}] {node.name} ({total_memories} memories)")
+    total_memories = len(node.episodic_memories) + len(node.user_memories) + len(node.knowledge_memories) + len(node.decision_memories)
+    mem = f" ({total_memories} memories)" if not node.children else ""
+    if node.level == 0:  
+        print(f"[{node.level}:{node.id}] {node.name}{mem}")
     else:
-        # Determine appropriate connector (└─ or ├─)
-        print(f"{prefix}└── [{node.level}] {node.name}")
+        print(f"{prefix}└── [{node.level}:{node.id}] {node.name}{mem}")
     
     # Calculate prefix for children
     child_prefix = prefix + "    " if node.level > 0 else "    "

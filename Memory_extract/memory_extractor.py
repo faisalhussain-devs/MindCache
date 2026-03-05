@@ -13,18 +13,25 @@ You must populate the JSON fields following this strict logic:
 - Explicitly state *why* you are choosing specific topics.
 
 **FIELD 2: "topics_root" (Global Context)**
-- The high-level Project or Domain that applies to *all* memories in this turn.
-- Example: ["MindCache", "Backend"] or ["Personal", "Travel"].
+- The single high-level Domain or Category that applies to *all* memories in this turn.
+- MUST be a SINGLE domain: 1-2 items MAX (e.g., ["Travel"] or ["Health & Wellness"]).
+- NEVER chain multiple unrelated domains together. ["Health & Wellness", "Food & Recipes", "Travel Planning"] is WRONG — those are 3 separate domains, not a path.
+- If the conversation covers multiple domains, create SEPARATE memory buckets, each with its own single-domain path.
+- Good examples: ["Travel"], ["Health & Wellness"], ["Technology", "Cloud Computing"], ["Food & Recipes"].
+- Bad examples: ["Health & Wellness", "Travel", "Food"], ["Career", "Marketing", "Technology"].
 
 **FIELD 3: "memory" (The Data Buckets)**
-- A list of objects. You can create multiple buckets if the user talks about different sub-topics (e.g., one bucket for "Database" and another for "API").
+- A list of objects. Create SEPARATE buckets for different sub-topics or different domains.
 - Inside each bucket, populate 'topics_branch', 'user', 'fact', and 'epis'.
 
 ### 2. DEFINITIONS (Strict Adherence)
 
 [topics_branch] -> "Sub-Folder Routing"
-- The specific sub-path for this memory bucket.
-- Example: If root is ["Travel", "Florida"], branch might be ["Orlando", "Dining"].
+- The specific sub-path WITHIN the domain set by topics_root.
+- Maximum 1-3 items deep. Keep it focused and specific.
+- Example: If root is ["Travel"], branch might be ["Japan", "Kichijoji"].
+- Example: If root is ["Food & Recipes"], branch might be ["Beverages", "Coffee Makers"].
+- NEVER repeat or mix domain names from topics_root. The branch is always INSIDE the root domain.
 - **IMPORTANT:** If existing topics are listed below, reuse those exact names when they match what you're extracting.
 
 [USER] -> "Preferences & Profile"
@@ -45,7 +52,15 @@ You must populate the JSON fields following this strict logic:
 - Explicitly store the reasoning behind choices or recommendations made during the chat.
 - e.g., "Recommended The Sugar Factory because user specifically asked for unique, large desserts."
 
-### 3. FINAL INSTRUCTION
+### 3. CHAIN STRUCTURE RULES
+The full topic path is: topics_root + topics_branch. Combined, this should be 2-5 items total.
+- Use SHALLOW chains (2-3 total) for broad topics: ["Travel"] + ["Packing Tips"] → Travel > Packing Tips
+- Use DEEPER chains (4-5 total) for specific sub-domains: ["Technology"] + ["Cloud Computing", "AWS", "Lambda"] → Technology > Cloud Computing > AWS > Lambda
+- Each level should add meaningful specificity. Don't add levels that are just synonyms of the parent.
+- Good chain: ["Food & Recipes"] + ["Beverages", "Coffee Makers"] (3 levels, each adds specificity)
+- Bad chain: ["Food & Recipes"] + ["Food", "Recipes", "Cooking", "Meal Prep"] (redundant levels)
+
+### 4. FINAL INSTRUCTION
 Your output must be VALID JSON matching the ChatExtraction schema.
 - Do not include explanations outside the JSON object.
 """
