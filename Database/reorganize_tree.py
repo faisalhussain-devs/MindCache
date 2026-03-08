@@ -8,6 +8,7 @@ from Memory_extract.safe_ai import SafeAI
 from retrieval.root_descent import BM25Scorer
 from pydantic import BaseModel, Field
 from typing import List, Union, Optional
+from collections import defaultdict
 
 class ReorganizedNode(BaseModel):
     id: Union[int, str] = Field(description="Original ID of the node.")
@@ -19,35 +20,53 @@ class TreeReorganizationSchema(BaseModel):
     modified_nodes_only: List[ReorganizedNode] = Field(description="ONLY include nodes that require a change (e.g., merging, newly assigned parent, or renamed). Do NOT include nodes that are already correctly placed and need no changes.")
 
 
-TOKEN_LIMIT = 5000
+TOKEN_LIMIT = 3000
 
 def estimate_tokens(text: str) -> int:
     return len(text) // 4
 
-def build_branch_text(node, depth=0) -> str:
-    """Recursively renders a tree branch as indented text. Uses ORM children relationship."""
-    text = "  " * depth + f"[{node.id}] {node.name}\n"
-    for child in node.children:
-        text += build_branch_text(child, depth + 1)
-    return text
+def build_branch_text(node, depth=0, lines=None, children_map=None):
+    if lines is None:
+        lines = []
 
-def build_chain_path_text(node) -> str:
-    """Builds root -> ... -> leaf path text for embedding. Uses ORM parent relationship."""
+    if children_map is not None:
+        children = children_map.get(node.id, [])
+    else:
+        children = node.children
+
+    child_count = len(children)
+    prefix = "\t" * depth
+    lines.append(f"{prefix}{node.id}: {node.name} ({child_count})")
+
+    for child in children:
+        build_branch_text(child, depth + 1, lines, children_map)
+
+    return "\n".join(lines)
+
+def build_chain_path_text(node, parent_map=None) -> str:
+    """Builds root > ... > leaf path text for embedding. Uses ORM parent relationship or in-memory map."""
     curr = node
     path = []
     while curr:
         path.append(curr.name)
-        curr = curr.parent
+        if parent_map is not None:
+            curr = parent_map.get(curr.id)
+        else:
+            curr = curr.parent
     path.reverse()
-    path_str = " -> ".join(path)
-    desc = f": {node.description}" if node.description else ""
+    path_str = " > ".join(path)
+    desc = f": {node.description}" if getattr(node, 'description', None) else ""
     return f"{path_str}{desc}"
 
-def _get_all_descendants(node):
+def _get_all_descendants(node, children_map=None):
     """Recursively collects a node and all its descendants."""
-    result = [node]
-    for child in node.children:
-        result.extend(_get_all_descendants(child))
+    result = []
+    stack = [node]
+    while stack:
+        curr = stack.pop()
+        result.append(curr)
+        stack.extend(children_map.get(curr.id, []))
+
     return result
 
 def _would_create_cycle(node_map, child_id, proposed_parent_id):
@@ -58,10 +77,9 @@ def _would_create_cycle(node_map, child_id, proposed_parent_id):
         if curr_id == child_id or curr_id in visited:
             return True
         visited.add(curr_id)
-        parent_node = node_map.get(curr_id)
-        curr_id = parent_node.parent_id if parent_node else None
+        curr_node = node_map.get(curr_id)
+        curr_id = curr_node.parent_id if curr_node else None
     return False
-
 
 def update_leaf_embedding_cache(session, nodes, embedder):
     """Updates the embedding cache for leaf nodes. Can be called standalone after any tree mutation."""
@@ -84,22 +102,22 @@ def update_leaf_embedding_cache(session, nodes, embedder):
                 last_embedded_at=datetime.now()
             ))
 
-def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dry_run=True):
+def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dry_run=True, node_map=None):
     raw_json = ai.generate(prompt=prompt, system_prompt=system_prompt, json_schema=TreeReorganizationSchema.model_json_schema())
     if not raw_json:
         print("Failed to get LLM response.")
         return
     try:
-        print(len(raw_json))
         data = json.loads(raw_json)
         nodes_data = data.get("modified_nodes_only", [])
         print(len(nodes_data))
     except json.JSONDecodeError as e:
         print(f"JSON Error: {e}\n")
         return
-        
-    existing_nodes = session.query(Topic).all()
-    node_map = {n.id: n for n in existing_nodes}
+    if node_map is None:
+        existing_nodes = session.query(Topic).all()
+        node_map = {n.id: n for n in existing_nodes}
+    auto_adjusted_node_ids = set()  # internal safety moves (not explicit LLM intent)
     
     # 1. Create NEW Parents (case-insensitive, stored as dict for lookup)
     new_parents_db = {}
@@ -122,7 +140,6 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
     for n_data in nodes_data:
         raw_node_id = n_data["id"]
         raw_merge_id = n_data.get("merged_into_id")
-        # IDs can arrive as int or string-of-int from LLM; coerce both
         try:
             node_id = int(raw_node_id)
         except (TypeError, ValueError):
@@ -144,54 +161,45 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
             bridge = target_node
             while bridge and bridge.parent_id != node_id:
                 bridge = node_map.get(bridge.parent_id) if bridge.parent_id else None
-            
+
             if bridge:
-                # Snip: give bridge its grandparent (db_node's parent)
-                bridge.parent = db_node.parent  # Use relationship, not FK — keeps backref in sync
-                nodes_reparented_by_merge.add(bridge.id)  # Prevent step 3 from overriding
+                bridge.parent = db_node.parent
+                nodes_reparented_by_merge.add(bridge.id)
                 print(f"  Resolved cycle: lifted '{bridge.name}' (ID {bridge.id}) out from under '{db_node.name}' (ID {node_id})")
             else:
-                # Shouldn't happen, but safety net
                 print(f"  SKIPPED merge {node_id} -> {merge_target_id} (cycle could not be resolved)")
                 continue
         db_node = node_map.get(node_id)
         target_node = node_map.get(merge_target_id)
         if not (db_node and target_node):
             continue
-            
-        was_leaf = not db_node.children
         
-        # Transfer memories (rare — typically only leaf nodes hold memories)
-        if was_leaf:
-            for mem in list(db_node.episodic_memories): mem.topic = target_node
-            for mem in list(db_node.user_memories): mem.topic = target_node
-            for mem in list(db_node.knowledge_memories): mem.topic = target_node
-            for mem in list(db_node.decision_memories): mem.topic = target_node
-        # Re-parent children (the common merge operation)
-        # If child can't go to target (cycle), send to source's parent (grandparent).
-        # This guarantees NO child is ever orphaned before source deletion.
+        # Transfer ALL memories (a node might have gained children and ceased being a leaf, but still holds old memories)
+        for mem in list(db_node.episodic_memories): mem.topic = target_node
+        for mem in list(db_node.user_memories): mem.topic = target_node
+        for mem in list(db_node.knowledge_memories): mem.topic = target_node
+        for mem in list(db_node.decision_memories): mem.topic = target_node
+
         children_list = list(db_node.children)
         print(f"  MERGE: '{db_node.name}' (ID {db_node.id}, parent={db_node.parent_id}) INTO '{target_node.name}' (ID {target_node.id}, parent={target_node.parent_id})")
         print(f"    Children to move: {[(c.name, c.id) for c in children_list]}")
         for child in children_list:
             old_pid = child.parent_id
             if not _would_create_cycle(node_map, child.id, target_node.id):
-                # Use relationship attribute (.parent), NOT FK (.parent_id).
-                # This automatically updates BOTH sides of the backref:
-                #   - removes child from db_node.children
-                #   - adds child to target_node.children
-                # Prevents stale cache → no backref cascade on delete.
                 child.parent = target_node
                 print(f"    CHILD '{child.name}' (ID {child.id}): parent {old_pid} → {target_node.id} (target)")
             else:
                 # Fallback: inherit source's parent (grandparent) — always safe
-                child.parent = db_node.parent
+                if db_node.parent is not None:
+                    child.parent = db_node.parent
+                else:
+                    child.parent = target_node # very exceptional case creating a cycle
+                auto_adjusted_node_ids.add(child.id)
                 print(f"    CHILD '{child.name}' (ID {child.id}): parent {old_pid} → {db_node.parent_id} (grandparent fallback, cycle)")
             nodes_reparented_by_merge.add(child.id)
         
-        # Delete old cache entry only if it was a leaf (had a cache entry)
-        if was_leaf:
-            session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == db_node.id).delete()
+        # Delete old cache entry
+        session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == db_node.id).delete()
         session.delete(db_node)
         merge_redirects[node_id] = merge_target_id
         del node_map[node_id]
@@ -263,30 +271,100 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
     # Flush step 3 parent changes before orphan cleanup
     session.flush()
 
-    # 3b. Mark ALL surviving target nodes as groomed (LLM omits nodes already okay)
-    for tgt in target_nodes:
-        if tgt.id in node_map:
-            db_tgt = node_map[tgt.id]
-            db_tgt.is_groomed = 1
-            db_tgt.chain_updated_at = datetime.now()
-            if db_tgt not in successfully_mapped_nodes:
-                successfully_mapped_nodes.append(db_tgt)
-
-    # 4. Recalculate Levels (BFS from roots)
-    session.flush()
-    session.expire_all()  # Ensure newly-elevated roots (parent_id=NULL) are picked up
-    def set_level(node, current_level, visited=None):
-        if visited is None: visited = set()
-        if node.id in visited: return
-        visited.add(node.id)
-        node.level = current_level
-        for child in node.children:
-            set_level(child, current_level + 1, visited)
-            
-    for r in session.query(Topic).filter(Topic.parent_id.is_(None)).all():
-        set_level(r, 0)
+    # 4. Sibling Dedup: merge same-name children under the same parent BEFORE empty node cleanup
+    session.expire_all()
+    all_parents = [None] + [n.id for n in session.query(Topic).all()]
+    sibling_merges = 0
+    for pid in all_parents:
+        if pid is None:
+            siblings = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
+        else:
+            parent_node = session.get(Topic, pid)
+            if not parent_node:
+                continue
+            siblings = list(parent_node.children)
         
-    # 5. Clean up orphaned empty nodes (loop to cascade: deleting a leaf may make its parent empty)
+        # Group by lowercase name
+        name_groups = {}
+        for s in siblings:
+            key = s.name.lower()
+            name_groups.setdefault(key, []).append(s)
+        
+        for _, group in name_groups.items():
+            if len(group) < 2:
+                continue
+            # Sort by total memory count descending — keep the richest
+            def mem_count(n):
+                return len(n.episodic_memories) + len(n.user_memories) + len(n.knowledge_memories) + len(n.decision_memories)
+            group.sort(key=mem_count, reverse=True)
+            survivor = group[0]
+            
+            # Ensure survivor's cache gets rebuilt
+            if survivor not in successfully_mapped_nodes:
+                successfully_mapped_nodes.append(survivor)
+                
+            for dup in group[1:]:
+                print(f"  SIBLING-DEDUP: '{dup.name}' (ID {dup.id}) INTO '{survivor.name}' (ID {survivor.id}) under parent={pid}")
+                # Transfer children
+                for child in list(dup.children):
+                    child.parent = survivor
+                # Transfer memories via relationship
+                for mem in list(dup.episodic_memories): mem.topic = survivor
+                for mem in list(dup.user_memories): mem.topic = survivor
+                for mem in list(dup.knowledge_memories): mem.topic = survivor
+                for mem in list(dup.decision_memories): mem.topic = survivor
+                # Clean up cache and delete
+                session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == dup.id).delete()
+                session.delete(dup)
+                sibling_merges += 1
+    if sibling_merges > 0:
+        session.flush()
+        print(f"  Merged {sibling_merges} same-name sibling duplicates.")
+
+    # 5. Enforce Leaf Node Constraint for Memories
+    session.expire_all()
+    leaf_enforcement_count = 0
+    for node in list(session.query(Topic).all()):
+        has_memories = (node.episodic_memories or node.user_memories or 
+                        node.knowledge_memories or node.decision_memories)
+        
+        # If it has children AND holds memories, we must split it
+        if node.children and has_memories:
+            original_name = node.name
+            
+            # Create a NEW parent node to take its place in the hierarchy
+            new_parent = Topic(
+                name=original_name,
+                level=node.level,
+                parent=node.parent,
+                timestamp=node.timestamp
+            )
+            session.add(new_parent)
+            session.flush()
+            
+            print(f"  LEAF-ENFORCEMENT: Split '{original_name}' (ID {node.id}). Created new parent (ID {new_parent.id}).")
+            
+            # Move all children of the current node to the new parent
+            for child in list(node.children):
+                child.parent = new_parent
+                
+            # The current node (holding the memories) stays in its original place as a sibling 
+            # to the new parent, but is renamed to serve as the generic leaf bucket.
+            node.name = f"General {original_name}"
+            node.parent = new_parent
+            node.level = new_parent.level + 1
+            
+            # The current node is now a leaf and its name changed. Queue it for cache update.
+            if node not in successfully_mapped_nodes:
+                successfully_mapped_nodes.append(node)
+                
+            leaf_enforcement_count += 1
+
+    if leaf_enforcement_count > 0:
+        session.flush()
+        print(f"  Enforced leaf constraint on {leaf_enforcement_count} nodes (memories moved to generic children).")
+
+    # 8. Clean up orphaned empty nodes (loop to cascade: deleting a leaf may make its parent empty)
     session.expire_all()  # Force SQLAlchemy to re-read relationships from DB
     total_deleted = 0
     while True:
@@ -306,10 +384,39 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
         total_deleted += count_deleted
     if total_deleted > 0:
         print(f"  Deleted {total_deleted} empty orphaned/duplicate nodes.")
-             
-    session.flush()
+    
+    # 7. Mark ALL surviving target nodes as groomed (LLM omits nodes already okay)
+    for tgt in target_nodes:
+        if tgt.id in node_map:
+            db_tgt = node_map[tgt.id]
+            db_tgt.is_groomed = 1
+            db_tgt.chain_updated_at = datetime.now()
+            if db_tgt not in successfully_mapped_nodes:
+                successfully_mapped_nodes.append(db_tgt)
 
-    # 6. Update embedding cache for newly groomed leaf nodes
+    # 8. Nodes touched by automatic cycle handling are code-adjusted, not LLM-groomed.
+    if auto_adjusted_node_ids:
+        for auto_id in auto_adjusted_node_ids:
+            auto_node = node_map.get(auto_id) or session.get(Topic, auto_id)
+            if not auto_node:
+                continue
+            auto_node.is_groomed = 0
+            auto_node.chain_updated_at = datetime.now()
+
+    # 9. Recalculate Levels (BFS from roots) after final structural cleanup.
+    session.flush()
+    session.expire_all()
+    def set_level(node, current_level, visited=None):
+        if visited is None: visited = set()
+        if node.id in visited: return
+        visited.add(node.id)
+        node.level = current_level
+        for child in node.children:
+            set_level(child, current_level + 1, visited)
+
+    for r in session.query(Topic).filter(Topic.parent_id.is_(None)).all():
+        set_level(r, 0)
+        
     update_leaf_embedding_cache(session, successfully_mapped_nodes, embedder)
 
     session.commit()
@@ -429,27 +536,37 @@ def rebuild_groomed_cache(session, embedder):
     return np.array(matrix), groomed_ids
 
 
-def pass_targeted_vector(session, dry_run=True, top_k=3):
+def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3):
     print(" PHASE 2: TARGETED VECTOR GROOMING (HYBRID SCAN)")
     
     ai = SafeAI()
     embedder = EmbeddingManager()
     system_prompt = "You are an expert taxonomist. Integrate messy branches into groomed branches: merge duplicates, break chimera chains, fix misplacements, and eliminate name repetition. Output valid JSON."
     
+    # 0. Cache full DB into memory maps to avoid ORM N+1 performance death
+    children_map = defaultdict(list)
+    topic_by_id = {None: None}
+    topics = session.query(Topic).all()
+    for t in topics:
+        topic_by_id[t.id] = t
+        if t.parent_id is not None:
+            children_map[t.parent_id].append(t)
+    parent_map = {t.id: topic_by_id.get(t.parent_id) for t in topics}
+    
     # 1. Rebuild and fetch Groomed Matrix (The Haystack)
     groomed_matrix, groomed_ids = rebuild_groomed_cache(session, embedder)
     if len(groomed_ids) == 0:
         print("No groomed nodes exist. Falling back to Global Bootstrap or aborting.")
+        pass_global_bootstrap(session, full_tree_text, dry_run=dry_run)
         return
 
     # Build groomed chain texts for BM25 corpus
     groomed_chain_texts = []
     for gid in groomed_ids:
-        leaf = session.query(Topic).get(gid)
-        groomed_chain_texts.append(build_chain_path_text(leaf))
-        
-    # 2. Identify Targets: ALL leaf nodes that are ungroomed OR have ungroomed ancestors
-    #    Also include groomed nodes so the LLM can fix existing issues
+        leaf = session.get(Topic, gid)
+        groomed_chain_texts.append(build_chain_path_text(leaf, parent_map=parent_map))
+    
+    # 2. Identify Targets: ALL leaf nodes that are ungroomed OR have ungroomed ancestors and groomed nodes so the LLM can fix existing issues
     all_ungroomed = session.query(Topic).filter(Topic.is_groomed == 0).all()
     messy_heads = [
         n for n in all_ungroomed
@@ -466,9 +583,9 @@ def pass_targeted_vector(session, dry_run=True, top_k=3):
     head_descendants = []
     raw_texts = []
     for mr in messy_heads:
-        head_descendants.append(_get_all_descendants(mr))
-        b_text = build_branch_text(mr)
-        head_branch_texts.append(f"--- NEW MESSY BRANCH {mr.id} ---\n{b_text}")
+        head_descendants.append(_get_all_descendants(mr, children_map=children_map))
+        b_text = build_branch_text(mr, children_map=children_map)
+        head_branch_texts.append(f"MESSY BRANCH {mr.id}\n{b_text}")
         raw_texts.append(b_text)
     
     # 4. Batch-embed ALL messy heads in one call
@@ -499,66 +616,111 @@ def pass_targeted_vector(session, dry_run=True, top_k=3):
     similarity_scores = (vector_scores * 0.6) + (bm25_scores * 0.4)
     
     # 6. Per-head: resolve top-K groomed root branches (vectorized)
-    #    Pre-build leaf → root lookup (walk ORM once per unique leaf)
+    #    Pre-build leaf → root lookup (walk in-memory dict once per unique leaf)
     leaf_to_root = {}
     for gid in groomed_ids:
         if gid not in leaf_to_root:
-            curr = session.query(Topic).get(gid)
-            while curr and curr.parent:
-                curr = curr.parent
-            leaf_to_root[gid] = curr.id if curr else None
+            curr_id = gid
+            parent_id = parent_map.get(curr_id)
+            while parent_id is not None:
+                curr_id = parent_id
+                parent_id = parent_map.get(curr_id)
+            leaf_to_root[gid] = curr_id
 
     #    Single argsort across all rows at once
     k = min(top_k, similarity_scores.shape[1])
     top_k_indices = np.argsort(similarity_scores, axis=1)[:, -k:][:, ::-1]
 
-    #    Map indices → root IDs via the lookup
+    #    Map indices → root IDs via the lookup, preserving order and filtering by similarity
     per_head_groomed_roots = []
-    for row_indices in top_k_indices:
-        root_ids = {leaf_to_root[groomed_ids[idx]] for idx in row_indices if leaf_to_root.get(groomed_ids[idx]) is not None}
+    root_frequencies = {}
+    groomed_branch_cache = {}
+    groomed_branch_tokens = {}
+
+    for i, row_indices in enumerate(top_k_indices):
+        root_ids = []
+        seen = set()
+        for idx in row_indices:
+            if similarity_scores[i, idx] < 0.4:
+                continue
+            rid = leaf_to_root.get(groomed_ids[idx])
+            root_frequencies[rid] = root_frequencies.get(rid, 0) + 1
+            if rid is not None and rid not in seen:
+                g_root = session.get(Topic, rid)
+                if rid not in groomed_branch_cache:
+                    text = f"\n GROOMED BRANCH {g_root.id}\n" + build_branch_text(g_root, children_map=children_map)
+                    groomed_branch_cache[rid] = text
+                    groomed_branch_tokens[rid] = estimate_tokens(text)
+                seen.add(rid)
+                root_ids.append(rid)
         per_head_groomed_roots.append(root_ids)
     
-    # 7. Pre-render groomed branch texts (cache to avoid re-rendering)
-    groomed_branch_cache = {}
-    all_root_ids = set().union(*per_head_groomed_roots)
-    for rid in all_root_ids:
-        g_root = session.query(Topic).get(rid)
-        groomed_branch_cache[rid] = f"\n--- GROOMED BRANCH {g_root.id} [ESTABLISHED] ---\n" + build_branch_text(g_root)
-    
-    # 8. Dynamic token-based batching for LLM calls
-    cursor = 0
-    while cursor < len(messy_heads):
+    messy_chain_tokens = [estimate_tokens(t) for t in head_branch_texts]
+    unprocessed_indices = set(range(len(messy_heads)))
+
+    # 8. Dynamic greedy token-based batching for LLM calls
+    while unprocessed_indices:
         batch_messy_texts = []
         batch_groomed_root_ids = set()
         batch_nodes = []
         batch_token_count = 0
+        batch_indices = []
         
-        while cursor < len(messy_heads):
-            # Calculate what adding this head would cost
-            candidate_text = head_branch_texts[cursor]
-            candidate_groomed_ids = per_head_groomed_roots[cursor]
-            new_groomed_ids = candidate_groomed_ids - batch_groomed_root_ids
-            new_groomed_tokens = sum(estimate_tokens(groomed_branch_cache[rid]) for rid in new_groomed_ids)
-            head_tokens = estimate_tokens(candidate_text)
-            added_tokens = head_tokens + new_groomed_tokens
+        while unprocessed_indices:
+            best_idx = None
+            best_score = (float('inf'), 0)
+            best_added_tokens = 0
+            best_new_roots = set()
             
-            # If batch is non-empty and adding this would exceed limit, stop packing
-            if batch_messy_texts and (batch_token_count + added_tokens) > TOKEN_LIMIT:
+            for idx in unprocessed_indices:
+                candidate_roots = per_head_groomed_roots[idx]
+                new_roots = set(candidate_roots) - batch_groomed_root_ids
+                new_root_tokens = sum(groomed_branch_tokens[r] for r in new_roots)
+                
+                head_tokens = messy_chain_tokens[idx]
+                added_tokens = head_tokens + new_root_tokens
+                
+                # Capacity constraint check (always passes for the first item in an empty batch)
+                if batch_messy_texts and (batch_token_count + added_tokens) > TOKEN_LIMIT:
+                    continue
+                    
+                freq_bonus = sum(root_frequencies.get(r, 0) for r in candidate_roots)
+                score = (new_root_tokens, -freq_bonus)
+                
+                if score < best_score:
+                    best_score = score
+                    best_idx = idx
+                    best_added_tokens = added_tokens
+                    best_new_roots = new_roots
+            
+            if best_idx is None:
+                # No more remaining chains can fit in this specific batch
                 break
-            
-            batch_messy_texts.append(candidate_text)
-            batch_groomed_root_ids.update(candidate_groomed_ids)
-            batch_nodes.extend(head_descendants[cursor])
-            batch_token_count += added_tokens
-            cursor += 1
-        
+                
+            unprocessed_indices.remove(best_idx)
+            batch_messy_texts.append(head_branch_texts[best_idx])
+            batch_groomed_root_ids.update(best_new_roots)
+            batch_nodes.extend(head_descendants[best_idx])
+            batch_token_count += best_added_tokens
+            batch_indices.append(best_idx)
+
+        # Failsafe: if a single chain + its roots exceeds the TOKEN_LIMIT entirely on its own,
+        # it will be indefinitely skipped by the capacity check above. We must force it through
+        # in an isolated batch of 1 so it isn't dropped, letting the LLM handle the truncation.
+        if not batch_indices:
+            forced_idx = unprocessed_indices.pop()
+            batch_messy_texts.append(head_branch_texts[forced_idx])
+            batch_groomed_root_ids.update(set(per_head_groomed_roots[forced_idx]))
+            batch_nodes.extend(head_descendants[forced_idx])
+            batch_token_count += (messy_chain_tokens[forced_idx] + sum(groomed_branch_tokens[r] for r in per_head_groomed_roots[forced_idx]))
+
         batch_nodes = list(set(batch_nodes))
         
         # Include groomed nodes in target_nodes so the LLM can fix them too
         groomed_nodes_in_batch = []
         for rid in batch_groomed_root_ids:
-            g_root = session.query(Topic).get(rid)
-            groomed_nodes_in_batch.extend(_get_all_descendants(g_root))
+            g_root = session.get(Topic, rid)
+            groomed_nodes_in_batch.extend(_get_all_descendants(g_root, children_map=children_map))
         batch_nodes = list(set(batch_nodes + groomed_nodes_in_batch))
         
         groomed_context_text = "".join(groomed_branch_cache[rid] for rid in batch_groomed_root_ids)
@@ -606,7 +768,7 @@ def pass_targeted_vector(session, dry_run=True, top_k=3):
         {"".join(batch_messy_texts)}
         """
         
-        apply_mapping(session, ai, prompt, system_prompt, batch_nodes, embedder, dry_run)
+        apply_mapping(session, ai, prompt, system_prompt, batch_nodes, embedder, dry_run, node_map=topic_by_id)
 
 
 def reorganize_tree(dry_run=True):
@@ -624,7 +786,7 @@ def reorganize_tree(dry_run=True):
         if total_tokens < TOKEN_LIMIT:
             pass_global_bootstrap(session, full_tree_text, dry_run=dry_run)
         else:
-            pass_targeted_vector(session, dry_run=dry_run)
+            pass_targeted_vector(session, full_tree_text, dry_run=dry_run)
             
     finally:
         session.close()

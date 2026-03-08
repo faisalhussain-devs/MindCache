@@ -78,7 +78,7 @@ class RootDescent:
         all_candidates = []
         
         try:
-            root = session.query(Topic).get(root_node.id)
+            root = session.get(Topic, root_node.id)
             if not root:
                 return []
 

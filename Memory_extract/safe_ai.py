@@ -19,7 +19,8 @@ class SafeAI:
             if not single_key:
                 raise EnvironmentError("GEMINI_API_KEYS or GEMINI_API_KEY not set.")
             self.keys = [single_key.strip()]
-            
+        
+        print(self.keys)    
         self.current_key_idx = 0
         self.model_name = model_name
         self._init_client()
@@ -36,7 +37,7 @@ class SafeAI:
         temperature: float = 0.1,
         max_tokens: int = 64000,
         json_schema: dict | None = None,
-        retries: int = 1,
+        retries: int = 5,
     ):
         for attempt in range(retries):
             

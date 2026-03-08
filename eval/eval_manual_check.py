@@ -163,7 +163,7 @@ def retrieve_with_provenance(query: str, config: RetrievalConfig = None) -> dict
     memory_tables = [EpisodicMemory, UserMemory, KnowledgeMemory, DecisionMemory]
     
     for candidate in candidates:
-        topic = db_session.query(Topic).get(candidate.topic_id)
+        topic = db_session.get(Topic, candidate.topic_id)
         if not topic:
             continue
         

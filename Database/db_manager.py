@@ -64,7 +64,7 @@ class DatabaseManager:
     def mark_job_status(self, job_id, status):
         session = self.Session()
         try:
-            job = session.query(ProcessingJob).get(job_id)
+            job = session.get(ProcessingJob, job_id)
             if job:
                 job.status = status
                 if status == 'failed':
@@ -159,7 +159,29 @@ class DatabaseManager:
                 session.add(current_node)
                 session.flush()
             
-            parent_node = current_node 
+        # Step 4: Enforce Leaf Node Constraint
+        # Memories should only be attached to leaf nodes (nodes without children).
+        # If the resolved path ends on a node that already has children,
+        # we create a child leaf node (e.g., "General [Topic Name]") to hold the new memories.
+        if current_node.children:
+            # Check if a generic leaf already exists
+            generic_name = f"General {current_node.name}"
+            leaf_node = session.query(Topic).filter(
+                func.lower(Topic.name) == generic_name.lower(),
+                Topic.parent_id == current_node.id
+            ).first()
+            
+            if not leaf_node:
+                leaf_node = Topic(
+                    name=generic_name,
+                    level=current_node.level + 1,
+                    parent=current_node,
+                    timestamp=job_timestamp if job_timestamp else datetime.now()
+                )
+                session.add(leaf_node)
+                session.flush()
+            return leaf_node
+            
         return current_node
 
     def get_topic_tree_hints(self, max_depth=2):
@@ -190,7 +212,7 @@ class DatabaseManager:
         session = self.Session()
         try:
             # Timestamp priority: session_timestamp (dataset) > job.timestamp > now()
-            job = session.query(ProcessingJob).get(job_id)
+            job = session.get(ProcessingJob, job_id)
             if session_timestamp:
                 from dateutil.parser import parse as parse_dt
                 try:

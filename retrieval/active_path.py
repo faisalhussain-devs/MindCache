@@ -77,7 +77,7 @@ class ActivePathRetrieval:
                 # Primary: direct ID lookup (fast, reliable)
                 topic = None
                 if topic_id:
-                    topic = session.query(Topic).get(topic_id)
+                    topic = session.get(Topic, topic_id)
                 
                 # Fallback: walk chain if ID lookup failed
                 if not topic and chain:

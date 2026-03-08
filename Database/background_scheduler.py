@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker
 from Database.db_setup import engine
 from Database.db_manager import DatabaseManager
 from Database.nodes_summary import RecursiveSummarizer
-from reorganize_tree import reorganize_tree, repair_cycles
+from Database.reorganize_tree import reorganize_tree, repair_cycles
 from Database.embedder import run_embedding_job
 
 COOLDOWN_SECONDS = 100
