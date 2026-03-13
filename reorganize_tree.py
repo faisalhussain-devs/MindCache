@@ -20,7 +20,7 @@ class TreeReorganizationSchema(BaseModel):
     modified_nodes_only: List[ReorganizedNode] = Field(description="ONLY include nodes that require a change (e.g., merging, newly assigned parent, or renamed). Do NOT include nodes that are already correctly placed and need no changes.")
 
 
-TOKEN_LIMIT = 3000
+TOKEN_LIMIT = 7000
 
 def estimate_tokens(text: str) -> int:
     return len(text) // 4
@@ -40,8 +40,8 @@ def build_branch_text(node, depth=0, lines=None, children_map=None):
 
     for child in children:
         build_branch_text(child, depth + 1, lines, children_map)
-
-    return "\n".join(lines)
+    if depth == 0:
+        return "\n".join(lines)
 
 def build_chain_path_text(node, parent_map=None) -> str:
     """Builds root > ... > leaf path text for embedding. Uses ORM parent relationship or in-memory map."""
@@ -65,7 +65,10 @@ def _get_all_descendants(node, children_map=None):
     while stack:
         curr = stack.pop()
         result.append(curr)
-        stack.extend(children_map.get(curr.id, []))
+        if children_map is not None:
+            stack.extend(children_map.get(curr.id, []))
+        else:
+            stack.extend(curr.children)
 
     return result
 
@@ -102,7 +105,7 @@ def update_leaf_embedding_cache(session, nodes, embedder):
                 last_embedded_at=datetime.now()
             ))
 
-def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dry_run=True, node_map=None):
+def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dry_run=True, children_map=None, node_map=None):
     raw_json = ai.generate(prompt=prompt, system_prompt=system_prompt, json_schema=TreeReorganizationSchema.model_json_schema())
     if not raw_json:
         print("Failed to get LLM response.")
@@ -114,9 +117,6 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
     except json.JSONDecodeError as e:
         print(f"JSON Error: {e}\n")
         return
-    if node_map is None:
-        existing_nodes = session.query(Topic).all()
-        node_map = {n.id: n for n in existing_nodes}
     auto_adjusted_node_ids = set()  # internal safety moves (not explicit LLM intent)
     
     # 1. Create NEW Parents (case-insensitive, stored as dict for lookup)
@@ -273,22 +273,13 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
 
     # 4. Sibling Dedup: merge same-name children under the same parent BEFORE empty node cleanup
     session.expire_all()
-    all_parents = [None] + [n.id for n in session.query(Topic).all()]
     sibling_merges = 0
-    for pid in all_parents:
-        if pid is None:
-            siblings = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
-        else:
-            parent_node = session.get(Topic, pid)
-            if not parent_node:
-                continue
-            siblings = list(parent_node.children)
-        
+    for pid, children in children_map.items():
         # Group by lowercase name
-        name_groups = {}
-        for s in siblings:
+        name_groups = defaultdict(list)
+        for s in children:
             key = s.name.lower()
-            name_groups.setdefault(key, []).append(s)
+            name_groups[key].append(s)
         
         for _, group in name_groups.items():
             if len(group) < 2:
@@ -331,40 +322,49 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
         # If it has children AND holds memories, we must split it
         if node.children and has_memories:
             original_name = node.name
-            
-            # Create a NEW parent node to take its place in the hierarchy
-            new_parent = Topic(
-                name=original_name,
-                level=node.level,
-                parent=node.parent,
-                timestamp=node.timestamp
-            )
-            session.add(new_parent)
-            session.flush()
-            
-            print(f"  LEAF-ENFORCEMENT: Split '{original_name}' (ID {node.id}). Created new parent (ID {new_parent.id}).")
-            
-            # Move all children of the current node to the new parent
-            for child in list(node.children):
-                child.parent = new_parent
-                
-            # The current node (holding the memories) stays in its original place as a sibling 
-            # to the new parent, but is renamed to serve as the generic leaf bucket.
-            node.name = f"General {original_name}"
-            node.parent = new_parent
-            node.level = new_parent.level + 1
-            
-            # The current node is now a leaf and its name changed. Queue it for cache update.
+            if not original_name.startswith("General "):
+                # Create a NEW parent node to take its place in the hierarchy
+                new_parent = Topic(
+                    name=original_name,
+                    level=node.level,
+                    parent=node.parent,
+                    timestamp=node.timestamp
+                )
+                session.add(new_parent)
+                print(f"  LEAF-ENFORCEMENT: Split '{original_name}' (ID {node.id}). Created new parent .")
+                # Move all children of the current node to the new parent
+                for child in list(node.children):
+                    child.parent = new_parent
+                # The current node (holding the memories) stays in its original place as a sibling 
+                # to the new parent, but is renamed to serve as the generic leaf bucket.
+                node.name = f"General {original_name}"
+                node.parent = new_parent
+                node.level = new_parent.level + 1
+            else:
+                parent = node.parent
+                level = max(0, node.level - 1)
+                if parent is None:
+                    parent = Topic(
+                        name=original_name.removeprefix("General "),
+                        level=level,
+                        parent=None,
+                        timestamp=node.timestamp
+                    )
+                    session.add(parent)
+                for child in list(node.children):
+                    child.parent = parent
+                node.parent = parent
+                node.level = level + 1                
+                # The current node is now a leaf and its name changed. Queue it for cache update.
             if node not in successfully_mapped_nodes:
-                successfully_mapped_nodes.append(node)
-                
+                    successfully_mapped_nodes.append(node)       
             leaf_enforcement_count += 1
 
     if leaf_enforcement_count > 0:
         session.flush()
         print(f"  Enforced leaf constraint on {leaf_enforcement_count} nodes (memories moved to generic children).")
 
-    # 8. Clean up orphaned empty nodes (loop to cascade: deleting a leaf may make its parent empty)
+    # 6. Clean up orphaned empty nodes (loop to cascade: deleting a leaf may make its parent empty)
     session.expire_all()  # Force SQLAlchemy to re-read relationships from DB
     total_deleted = 0
     while True:
@@ -423,7 +423,7 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
     print("  Mapping applied and committed.")
 
 
-def pass_global_bootstrap(session, full_tree_text, dry_run=True):
+def pass_global_bootstrap(session, full_tree_text, dry_run=True, parent_map=None, children_map=None, node_map=None):
     print(" PHASE 1: GLOBAL BOOTSTRAP (SMALL DB)")
     ai = SafeAI()
     embedder = EmbeddingManager()
@@ -479,7 +479,7 @@ def pass_global_bootstrap(session, full_tree_text, dry_run=True):
     {full_tree_text}
     """
     all_nodes = session.query(Topic).all()
-    apply_mapping(session, ai, prompt, system_prompt, all_nodes, embedder, dry_run)
+    apply_mapping(session, ai, prompt, system_prompt, all_nodes, embedder, dry_run, children_map=children_map, node_map=node_map)
 
 
 def rebuild_groomed_cache(session, embedder):
@@ -536,22 +536,12 @@ def rebuild_groomed_cache(session, embedder):
     return np.array(matrix), groomed_ids
 
 
-def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3):
+def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3, parent_map=None, children_map=None, node_map=None):
     print(" PHASE 2: TARGETED VECTOR GROOMING (HYBRID SCAN)")
     
     ai = SafeAI()
     embedder = EmbeddingManager()
     system_prompt = "You are an expert taxonomist. Integrate messy branches into groomed branches: merge duplicates, break chimera chains, fix misplacements, and eliminate name repetition. Output valid JSON."
-    
-    # 0. Cache full DB into memory maps to avoid ORM N+1 performance death
-    children_map = defaultdict(list)
-    topic_by_id = {None: None}
-    topics = session.query(Topic).all()
-    for t in topics:
-        topic_by_id[t.id] = t
-        if t.parent_id is not None:
-            children_map[t.parent_id].append(t)
-    parent_map = {t.id: topic_by_id.get(t.parent_id) for t in topics}
     
     # 1. Rebuild and fetch Groomed Matrix (The Haystack)
     groomed_matrix, groomed_ids = rebuild_groomed_cache(session, embedder)
@@ -621,10 +611,10 @@ def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3):
     for gid in groomed_ids:
         if gid not in leaf_to_root:
             curr_id = gid
-            parent_id = parent_map.get(curr_id)
-            while parent_id is not None:
-                curr_id = parent_id
-                parent_id = parent_map.get(curr_id)
+            parent_node = parent_map.get(curr_id)
+            while parent_node is not None:
+                curr_id = parent_node.id
+                parent_node = parent_map.get(curr_id)
             leaf_to_root[gid] = curr_id
 
     #    Single argsort across all rows at once
@@ -768,7 +758,7 @@ def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3):
         {"".join(batch_messy_texts)}
         """
         
-        apply_mapping(session, ai, prompt, system_prompt, batch_nodes, embedder, dry_run, node_map=topic_by_id)
+        apply_mapping(session, ai, prompt, system_prompt, batch_nodes, embedder, dry_run, children_map, node_map)
 
 
 def reorganize_tree(dry_run=True):
@@ -782,11 +772,20 @@ def reorganize_tree(dry_run=True):
         total_tokens = estimate_tokens(full_tree_text)
         
         print(f"Total graph tokens estimated: {total_tokens}/{TOKEN_LIMIT}")
+        # 0. Cache full DB into memory maps to avoid ORM N+1 performance death
+        children_map = defaultdict(list)
+        topic_by_id = {None: None}
+        topics = session.query(Topic).all()
+        for t in topics:
+            topic_by_id[t.id] = t
+            if t.parent_id is not None:
+                children_map[t.parent_id].append(t)
+        parent_map = {t.id: topic_by_id.get(t.parent_id) for t in topics}
         
         if total_tokens < TOKEN_LIMIT:
-            pass_global_bootstrap(session, full_tree_text, dry_run=dry_run)
+            pass_global_bootstrap(session, full_tree_text, dry_run=dry_run, parent_map=parent_map, children_map=children_map, node_map=topic_by_id)
         else:
-            pass_targeted_vector(session, full_tree_text, dry_run=dry_run)
+            pass_targeted_vector(session, full_tree_text, dry_run=dry_run, parent_map=parent_map, children_map=children_map, node_map=topic_by_id)
             
     finally:
         session.close()
