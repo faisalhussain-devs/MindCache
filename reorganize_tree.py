@@ -1,3 +1,4 @@
+from torch import chunk
 import json
 import numpy as np
 from datetime import datetime
@@ -19,8 +20,15 @@ class ReorganizedNode(BaseModel):
 class TreeReorganizationSchema(BaseModel):
     modified_nodes_only: List[ReorganizedNode] = Field(description="ONLY include nodes that require a change (e.g., merging, newly assigned parent, or renamed). Do NOT include nodes that are already correctly placed and need no changes.")
 
+class SubCategory(BaseModel):
+    name: str = Field(description="Name of the sub-category.")
+    memory_ids: List[int] = Field(description="List of memory IDs that belong to this sub-category.")
+    placement: str = Field(description="'child' if sub-categories should be children of the current node, or 'sibling' if they should replace the current node at the same level (as siblings to it under its parent).")
 
-TOKEN_LIMIT = 7000
+class LeafSplitSchema(BaseModel):
+    sub_categories: List[SubCategory] = Field(description="List of sub-categories to split the overloaded leaf into. Each memory ID must appear in exactly one sub-category.")
+
+TOKEN_LIMIT = 6000
 
 def estimate_tokens(text: str) -> int:
     return len(text) // 4
@@ -105,7 +113,7 @@ def update_leaf_embedding_cache(session, nodes, embedder):
                 last_embedded_at=datetime.now()
             ))
 
-def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dry_run=True, children_map=None, node_map=None):
+def apply_mapping(session, ai, prompt, system_prompt, target_nodes, children_map=None, node_map=None):
     raw_json = ai.generate(prompt=prompt, system_prompt=system_prompt, json_schema=TreeReorganizationSchema.model_json_schema())
     if not raw_json:
         print("Failed to get LLM response.")
@@ -113,7 +121,6 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
     try:
         data = json.loads(raw_json)
         nodes_data = data.get("modified_nodes_only", [])
-        print(len(nodes_data))
     except json.JSONDecodeError as e:
         print(f"JSON Error: {e}\n")
         return
@@ -200,6 +207,9 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
         
         # Delete old cache entry
         session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == db_node.id).delete()
+        # Clean up ALL in-memory maps before deleting
+        if children_map and db_node.parent_id in children_map:
+            children_map[db_node.parent_id] = [c for c in children_map[db_node.parent_id] if c.id != node_id]
         session.delete(db_node)
         merge_redirects[node_id] = merge_target_id
         del node_map[node_id]
@@ -304,8 +314,12 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
                 for mem in list(dup.user_memories): mem.topic = survivor
                 for mem in list(dup.knowledge_memories): mem.topic = survivor
                 for mem in list(dup.decision_memories): mem.topic = survivor
-                # Clean up cache and delete
+                # Clean up cache, ALL maps, and delete
                 session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == dup.id).delete()
+                if children_map and pid in children_map:
+                    children_map[pid] = [c for c in children_map[pid] if c.id != dup.id]
+                if node_map and dup.id in node_map:
+                    del node_map[dup.id]
                 session.delete(dup)
                 sibling_merges += 1
     if sibling_merges > 0:
@@ -375,6 +389,11 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
             if not has_memories and not node.children:
                 print(f"  CLEANUP-DELETE: '{node.name}' (ID {node.id}, parent={node.parent_id}) — empty, no children")
                 session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == node.id).delete()
+                # Clean up ALL in-memory maps
+                if children_map and node.parent_id in children_map:
+                    children_map[node.parent_id] = [c for c in children_map[node.parent_id] if c.id != node.id]
+                if node_map and node.id in node_map:
+                    del node_map[node.id]
                 session.delete(node)
                 count_deleted += 1
         if count_deleted == 0:
@@ -416,17 +435,16 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, embedder, dr
 
     for r in session.query(Topic).filter(Topic.parent_id.is_(None)).all():
         set_level(r, 0)
-        
-    update_leaf_embedding_cache(session, successfully_mapped_nodes, embedder)
 
     session.commit()
+    session.expire_all()
     print("  Mapping applied and committed.")
+    return successfully_mapped_nodes
 
 
-def pass_global_bootstrap(session, full_tree_text, dry_run=True, parent_map=None, children_map=None, node_map=None):
+def pass_global_bootstrap(session, full_tree_text, children_map=None, node_map=None):
     print(" PHASE 1: GLOBAL BOOTSTRAP (SMALL DB)")
     ai = SafeAI()
-    embedder = EmbeddingManager()
     
     system_prompt = "You are an expert taxonomist restructuring a messy category tree into a clean, well-organized taxonomy. Output valid JSON."
     
@@ -469,9 +487,12 @@ def pass_global_bootstrap(session, full_tree_text, dry_run=True, parent_map=None
     7. COHERENT GROUPING: "Technology" and "Travel" should NOT be siblings under "Sustainable Living" — they are different domains.
     8. CONSOLIDATE OVERLAPPING ROOTS: If two roots cover overlapping concepts, keep the broader one and absorb the other. But keep genuinely distinct domains as separate roots even if they are small — a small root that is semantically unique (e.g., "Spirituality") is fine.
     9. SEMANTIC ACCURACY: Every node must be under a semantically correct parent. "Yoga" is NOT a "Team Sport" — it belongs under "Health & Wellness". Double-check every parent-child relationship makes logical sense.
+    10. ONTOLOGICAL PLACEMENT: Place nodes by what they ARE, not where the user encountered them. "Economy" is NOT a child of "Education" — it belongs under "Economics" or "Business & Management". "Urban Planning" is NOT under "Education" — it's under "Public Policy" or "Cities & Infrastructure". Ask: "Would a library catalog place this topic here?"
+    11. ENTITY-TYPE GROUPING: When siblings mix categories and named entities (brands, organizations, specific places), create grouping sub-levels. Example: Clothing & Fashion > [Sneakers, Zara] is wrong → split into Clothing & Fashion > Brands > [Zara] and Clothing & Fashion > Footwear > [Sneakers].
+    12. OVERLOADED NODES: If any parent has 20+ direct children, group them into meaningful sub-categories. Don't leave a flat list of 20 siblings — organize them.
     
     OUTPUT RULES:
-    10. Only output nodes that NEED changes. Omit nodes that are already correct.
+    13. Only output nodes that NEED changes. Omit nodes that are already correct.
     
     IMPORTANT: To make a node a root, set parent_id: null. Do NOT create NEW_ roots — elevate existing nodes instead. NEVER create a root called "root", "general", or similar generic names.
     
@@ -479,7 +500,7 @@ def pass_global_bootstrap(session, full_tree_text, dry_run=True, parent_map=None
     {full_tree_text}
     """
     all_nodes = session.query(Topic).all()
-    apply_mapping(session, ai, prompt, system_prompt, all_nodes, embedder, dry_run, children_map=children_map, node_map=node_map)
+    return apply_mapping(session, ai, prompt, system_prompt, all_nodes, children_map=children_map, node_map=node_map)
 
 
 def rebuild_groomed_cache(session, embedder):
@@ -536,27 +557,14 @@ def rebuild_groomed_cache(session, embedder):
     return np.array(matrix), groomed_ids
 
 
-def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3, parent_map=None, children_map=None, node_map=None):
+def pass_targeted_vector(session, full_tree_text, top_k=3, parent_map=None, children_map=None, node_map=None):
     print(" PHASE 2: TARGETED VECTOR GROOMING (HYBRID SCAN)")
     
     ai = SafeAI()
     embedder = EmbeddingManager()
     system_prompt = "You are an expert taxonomist. Integrate messy branches into groomed branches: merge duplicates, break chimera chains, fix misplacements, and eliminate name repetition. Output valid JSON."
     
-    # 1. Rebuild and fetch Groomed Matrix (The Haystack)
-    groomed_matrix, groomed_ids = rebuild_groomed_cache(session, embedder)
-    if len(groomed_ids) == 0:
-        print("No groomed nodes exist. Falling back to Global Bootstrap or aborting.")
-        pass_global_bootstrap(session, full_tree_text, dry_run=dry_run)
-        return
-
-    # Build groomed chain texts for BM25 corpus
-    groomed_chain_texts = []
-    for gid in groomed_ids:
-        leaf = session.get(Topic, gid)
-        groomed_chain_texts.append(build_chain_path_text(leaf, parent_map=parent_map))
-    
-    # 2. Identify Targets: ALL leaf nodes that are ungroomed OR have ungroomed ancestors and groomed nodes so the LLM can fix existing issues
+    # 1. Identify Targets: ALL leaf nodes that are ungroomed OR have ungroomed ancestors and groomed nodes so the LLM can fix existing issues
     all_ungroomed = session.query(Topic).filter(Topic.is_groomed == 0).all()
     messy_heads = [
         n for n in all_ungroomed
@@ -568,7 +576,7 @@ def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3, parent_
         
     print(f"Found {len(messy_heads)} ungroomed subtree heads to groom.")
     
-    # 3. Build branch texts and descendants for ALL heads upfront
+    # 2. Build branch texts and descendants for ALL heads upfront
     head_branch_texts = []
     head_descendants = []
     raw_texts = []
@@ -578,9 +586,22 @@ def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3, parent_
         head_branch_texts.append(f"MESSY BRANCH {mr.id}\n{b_text}")
         raw_texts.append(b_text)
     
-    # 4. Batch-embed ALL messy heads in one call
+    # 3. Batch-embed ALL messy heads in one call
     all_messy_vecs = embedder.get_batch_embeddings(raw_texts)
     target_matrix = np.array(all_messy_vecs, dtype=np.float32)
+
+    # 4. Rebuild and fetch Groomed Matrix (The Haystack)
+    groomed_matrix, groomed_ids = rebuild_groomed_cache(session, embedder)
+    if len(groomed_ids) == 0:
+        print("No groomed nodes exist. Falling back to Global Bootstrap or aborting.")
+        pass_global_bootstrap(session, full_tree_text, dry_run=dry_run)
+        return
+
+    # Build groomed chain texts for BM25 corpus
+    groomed_chain_texts = []
+    for gid in groomed_ids:
+        leaf = session.get(Topic, gid)
+        groomed_chain_texts.append(build_chain_path_text(leaf, parent_map=parent_map))
     
     # 5. Hybrid scoring: vector similarity (0.6) + BM25 keyword match (0.4)
     vector_scores = target_matrix @ groomed_matrix.T  # (M x N)
@@ -647,6 +668,8 @@ def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3, parent_
     
     messy_chain_tokens = [estimate_tokens(t) for t in head_branch_texts]
     unprocessed_indices = set(range(len(messy_heads)))
+
+    all_successfully_mapped_nodes = []
 
     # 8. Dynamic greedy token-based batching for LLM calls
     while unprocessed_indices:
@@ -746,11 +769,14 @@ def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3, parent_
         6. NO NAME REPETITION: A child must never share its name with its parent or any ancestor. If found, FLATTEN by moving the child's children up to the parent.
         7. SEMANTIC ACCURACY: Every node must be under a semantically correct parent. "Yoga" is NOT a "Team Sport". "Cartagena, Colombia" is NOT under "Food & Recipes".
         8. FIX ESTABLISHED ISSUES: If you see problems in [ESTABLISHED] branches (misplaced nodes, duplicates, name repetition), fix them too.
+        9. ONTOLOGICAL PLACEMENT: Place nodes by what they ARE, not where the user encountered them. "Economy" is NOT a child of "Education". "Urban Planning" is NOT under "Education". Ask: "Would a library catalog place this topic here?"
+        10. ENTITY-TYPE GROUPING: When siblings mix categories and named entities (brands, organizations, places), create grouping sub-levels to separate them.
+        11. OVERLOADED NODES: If any parent has 20+ direct children, group them into meaningful sub-categories.
         
         OUTPUT RULES:
-        9. Only output nodes that NEED changes. Omit nodes that are already correct.
-        10. Output leaf nodes (with memories) that need re-parenting or merging. Do NOT output empty intermediate nodes.
-        
+        12. Only output nodes that NEED changes. Omit nodes that are already correct.
+        13. Output leaf nodes (with memories) that need re-parenting or merging. Do NOT output empty intermediate nodes.
+        14. Do NOT output parent_id as NEW_Root, NEW_General, NEW_Misc..
         EXISTING GROOMED BRANCHES [ESTABLISHED] (use these IDs as parent_id or merged_into_id targets):
         {groomed_context_text}
         
@@ -758,11 +784,281 @@ def pass_targeted_vector(session, full_tree_text, dry_run=True, top_k=3, parent_
         {"".join(batch_messy_texts)}
         """
         
-        apply_mapping(session, ai, prompt, system_prompt, batch_nodes, embedder, dry_run, children_map, node_map)
+        mapped_nodes = apply_mapping(session, ai, prompt, system_prompt, batch_nodes, children_map, node_map)
+        if mapped_nodes:
+            all_successfully_mapped_nodes.extend(mapped_nodes)
+
+    return all_successfully_mapped_nodes
+
+
+SPLIT_THRESHOLD = 25
+
+def split_overloaded_leaves(session, changed_nodes = None, dry_run=True):
+    """Find leaf nodes with 25+ memories and split them into sub-categories using the LLM."""
+    ai = SafeAI()
+    embedder = EmbeddingManager()
+    
+    # Find all leaf nodes (no children) with total memories >= threshold
+    all_topics = session.query(Topic).all()
+    overloaded = []
+    for node in all_topics:
+        if node.children:
+            continue
+        total = (len(node.episodic_memories) + len(node.user_memories) + 
+                 len(node.knowledge_memories) + len(node.decision_memories))
+        if total >= SPLIT_THRESHOLD:
+            overloaded.append((node, total))
+    
+    if not overloaded:
+        print("[Auto-Split] No overloaded leaf nodes found.")
+        return
+    
+    print(f"\n[Auto-Split] Found {len(overloaded)} overloaded leaf nodes to split.")
+    
+    nodes_to_delete = []
+    new_child_nodes = []
+    
+    for node, total in overloaded:
+        # Build chain path for context
+        chain_path = build_chain_path_text(node)
+        
+        # Collect all memories with their IDs and types
+        memory_entries = []
+        for mem in node.episodic_memories:
+            memory_entries.append((mem.id, "episodic", mem.content))
+        for mem in node.user_memories:
+            memory_entries.append((mem.id, "user", mem.content))
+        for mem in node.knowledge_memories:
+            memory_entries.append((mem.id, "knowledge", mem.content))
+        for mem in node.decision_memories:
+            memory_entries.append((mem.id, "decision", mem.content))
+        
+        # Format memories for the prompt
+        memory_text = "\n".join(
+            f"  {mid} ({mtype}): {mcontent}" 
+            for mid, mtype, mcontent in memory_entries
+        )
+        
+        prompt = f"""You are an expert taxonomist. A leaf node in the knowledge tree has become overloaded with {total} memories and needs to be split into meaningful sub-categories.
+
+            CURRENT NODE PATH: {chain_path}
+
+            MEMORIES ({total} total):
+            {memory_text}
+
+            INSTRUCTIONS:
+            1. Analyze the memories and identify 2-6 meaningful sub-categories that would organize them well.
+            2. Each sub-category name should be specific and descriptive — NOT generic like "General" or "Other".
+            3. Every memory ID must appear in exactly ONE sub-category.
+            4. Sub-categories should be semantically coherent — group related memories together.
+            5. If some memories don't fit any clear category, create a specific catch-all like "Miscellaneous [specific topic]".
+
+            PARENT NODE DECISION:
+            6. For each sub-category, set "placement" to decide where it goes:
+               - "child": place as a child UNDER the current node (use when the current node name is meaningful and the sub-category belongs inside it).
+               - "sibling": place at the SAME level as the current node, under its parent (use when the sub-category is independent or the current node is a generic wrapper like "General Travel").
+            7. If ALL sub-categories are placed as "sibling", the current node will be auto-deleted if it has no remaining memories.
+
+            Output valid JSON matching the schema."""
+        
+        system_prompt = "You are an expert taxonomist splitting an overloaded leaf node into meaningful sub-categories. Output valid JSON."
+        
+        raw_json = ai.generate(
+            prompt=prompt, 
+            system_prompt=system_prompt, 
+            json_schema=LeafSplitSchema.model_json_schema()
+        )
+        if not raw_json:
+            print(f"  [Auto-Split] Failed to get LLM response for '{node.name}' (ID {node.id})")
+            continue
+        
+        try:
+            data = json.loads(raw_json)
+            sub_cats = data.get("sub_categories", [])
+        except json.JSONDecodeError as e:
+            print(f"  [Auto-Split] JSON Error for '{node.name}': {e}")
+            continue
+        
+        if len(sub_cats) < 2:
+            print(f"  [Auto-Split] LLM returned <2 sub-categories for '{node.name}', skipping.")
+            continue
+        
+        if dry_run:
+            print(f"  [Auto-Split DRY RUN] Would split '{node.name}' (ID {node.id}, {total} mems) into:")
+            for sc in sub_cats:
+                print(f"    - {sc['name']} ({len(sc['memory_ids'])} memories, {sc.get('placement', 'child')})")
+            continue
+        
+        # Build memory ID → ORM object lookup
+        mem_lookup = {}
+        for mem in node.episodic_memories:
+            mem_lookup[mem.id] = mem
+        for mem in node.user_memories:
+            mem_lookup[mem.id] = mem
+        for mem in node.knowledge_memories:
+            mem_lookup[mem.id] = mem
+        for mem in node.decision_memories:
+            mem_lookup[mem.id] = mem
+        
+        print(f"  [Auto-Split] Splitting '{node.name}' (ID {node.id}, {total} mems) into {len(sub_cats)} sub-categories:")
+        
+        for sc in sub_cats:
+            child_name = sc["name"]
+            child_mem_ids = sc.get("memory_ids", [])
+            placement = sc.get("placement", "child")
+            
+            # Determine parent based on placement
+            if placement == "sibling":
+                parent = node.parent
+                level = node.level
+            else:
+                parent = node
+                level = node.level + 1
+            
+            child_node = Topic(
+                name=child_name,
+                level=level,
+                parent=parent,
+                is_groomed=1,
+                chain_updated_at=datetime.now(),
+                timestamp=datetime.now()
+            )
+            session.add(child_node)
+            session.flush()
+            
+            # Reassign memories
+            moved = 0
+            for mid in child_mem_ids:
+                mem_obj = mem_lookup.get(mid)
+                if mem_obj:
+                    mem_obj.topic = child_node
+                    moved += 1
+            
+            new_child_nodes.append(child_node)
+            print(f"    - '{child_name}' (ID {child_node.id}): {moved} memories, placed as {placement}")
+        
+        
+        # Check if old node should be auto-deleted
+        session.flush()
+        session.expire(node)
+        remaining = (len(node.episodic_memories) + len(node.user_memories) + 
+                     len(node.knowledge_memories) + len(node.decision_memories))
+        has_children = bool(node.children)
+        
+        if remaining == 0 and not has_children:
+            nodes_to_delete.append(node)
+            print(f"    Queued '{node.name}' (ID {node.id}) for deletion — no memories or children remain")
+    
+    # Batch cleanup: delete all empty old nodes
+    for node in nodes_to_delete:
+        session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == node.id).delete()
+        session.delete(node)
+    if nodes_to_delete:
+        print(f"  Deleted {len(nodes_to_delete)} empty old nodes.")
+    
+    # Single embedder run for all new leaf nodes
+    changed_nodes.extend(new_child_nodes)
+    if changed_nodes:
+        update_leaf_embedding_cache(session, changed_nodes, embedder)
+        print(f"  Updated embeddings for {len(changed_nodes)} new leaf nodes.")
+    
+    session.commit()
+    print("[Auto-Split] Complete.")
+
+def cleanup_roots(session):
+    """Post-processing: merge duplicate roots, dissolve generic roots, mark tiny orphans."""
+    print("\n[Root Cleanup] Starting post-batch root cleanup...")
+    
+    roots = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
+    
+    # 1. Merge same-name roots (keep the one with most descendants)
+    name_groups = defaultdict(list)
+    for r in roots:
+        name_groups[r.name.lower()].append(r)
+    
+    merge_count = 0
+    for name, group in name_groups.items():
+        if len(group) < 2:
+            continue
+        # Count total descendants for each root
+        def count_descendants(node):
+            total = 0
+            stack = list(node.children)
+            while stack:
+                n = stack.pop()
+                total += 1
+                stack.extend(n.children)
+            return total
+        
+        group.sort(key=count_descendants, reverse=True)
+        survivor = group[0]
+        
+        for dup in group[1:]:
+            print(f"  ROOT-MERGE: '{dup.name}' (ID {dup.id}, {count_descendants(dup)} descendants) INTO '{survivor.name}' (ID {survivor.id})")
+            # Transfer children
+            for child in list(dup.children):
+                child.parent = survivor
+            # Transfer memories
+            for mem in list(dup.episodic_memories): mem.topic = survivor
+            for mem in list(dup.user_memories): mem.topic = survivor
+            for mem in list(dup.knowledge_memories): mem.topic = survivor
+            for mem in list(dup.decision_memories): mem.topic = survivor
+            # Delete cache and node
+            session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == dup.id).delete()
+            session.delete(dup)
+            merge_count += 1
+    
+    if merge_count > 0:
+        session.flush()
+        print(f"  Merged {merge_count} duplicate roots.")
+    
+    # 2. Dissolve generic roots ("root", "general", "misc", "other")
+    GENERIC_NAMES = {"root", "general", "misc", "other", "miscellaneous"}
+    session.expire_all()
+    roots = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
+    dissolve_count = 0
+    for r in roots:
+        if r.name.lower().strip() in GENERIC_NAMES:
+            print(f"  ROOT-DISSOLVE: '{r.name}' (ID {r.id}) — elevating {len(list(r.children))} children to roots")
+            for child in list(r.children):
+                child.parent = None
+                child.is_groomed = 0
+            # Transfer any memories to the first child or just let them go with the node
+            for mem in list(r.episodic_memories): mem.topic = None
+            for mem in list(r.user_memories): mem.topic = None
+            for mem in list(r.knowledge_memories): mem.topic = None
+            for mem in list(r.decision_memories): mem.topic = None
+            session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == r.id).delete()
+            session.delete(r)
+            dissolve_count += 1
+    
+    if dissolve_count > 0:
+        session.flush()
+        print(f"  Dissolved {dissolve_count} generic-named roots.")
+    
+    # 3. Mark tiny orphan roots (<=3 total nodes) as ungroomed for future pickup
+    session.expire_all()
+    roots = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
+    tiny_count = 0
+    for r in roots:
+        total_nodes = 1 + sum(1 for _ in _get_all_descendants(r)) - 1  # -1 because _get_all_descendants includes self
+        if total_nodes <= 3:
+            r.is_groomed = 0
+            for desc in _get_all_descendants(r):
+                desc.is_groomed = 0
+            tiny_count += 1
+            print(f"  TINY-ROOT: '{r.name}' (ID {r.id}, {total_nodes} nodes) marked ungroomed for future placement")
+    
+    if tiny_count > 0:
+        session.flush()
+        print(f"  Marked {tiny_count} tiny roots as ungroomed.")
+    
+    session.commit()
+    print("[Root Cleanup] Complete.")
 
 
 def reorganize_tree(dry_run=True):
-    Session = sessionmaker(bind=engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
     session = Session()
     try:
         all_roots = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
@@ -783,9 +1079,12 @@ def reorganize_tree(dry_run=True):
         parent_map = {t.id: topic_by_id.get(t.parent_id) for t in topics}
         
         if total_tokens < TOKEN_LIMIT:
-            pass_global_bootstrap(session, full_tree_text, dry_run=dry_run, parent_map=parent_map, children_map=children_map, node_map=topic_by_id)
+            nodes = pass_global_bootstrap(session, full_tree_text, children_map=children_map, node_map=topic_by_id)
         else:
-            pass_targeted_vector(session, full_tree_text, dry_run=dry_run, parent_map=parent_map, children_map=children_map, node_map=topic_by_id)
+            nodes = pass_targeted_vector(session, full_tree_text, top_k=3, parent_map=parent_map, children_map=children_map, node_map=topic_by_id)
+        cleanup_roots(session)
+        # Post-processing: split any overloaded leaf nodes
+        split_overloaded_leaves(session, nodes, dry_run=dry_run)
             
     finally:
         session.close()

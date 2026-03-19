@@ -59,12 +59,32 @@ You must populate the JSON fields following this strict logic:
 - e.g., "Recommended The Sugar Factory because user specifically asked for unique, large desserts."
 
 ### 3. CHAIN STRUCTURE RULES
-The full topic path is: topics_root + topics_branch. Combined, this should be 2-5 items total.
+The full topic path is: topics_root + topics_branch. Combined, this should be 2-5 items or more if needed.
 - Use SHALLOW chains (2-3 total) for broad topics: ["Travel"] + ["Packing Tips"] → Travel > Packing Tips
-- Use DEEPER chains (4-5 total) for specific sub-domains: ["Technology"] + ["Cloud Computing", "AWS", "Lambda"] → Technology > Cloud Computing > AWS > Lambda
+- Use DEEPER chains (4-5+ total) for specific sub-domains: ["Technology"] + ["Cloud Computing", "AWS", "Lambda"] → Technology > Cloud Computing > AWS > Lambda
 - Each level should add meaningful specificity. Don't add levels that are just synonyms of the parent.
 - Good chain: ["Food & Recipes"] + ["Beverages", "Coffee Makers"] (3 levels, each adds specificity)
 - Bad chain: ["Food & Recipes"] + ["Food", "Recipes", "Cooking", "Meal Prep"] (redundant levels)
+
+**SPECIFICITY RULE:** Each leaf node must be specific enough that it won't accumulate 20+ unrelated memories over time.
+- BAD:  ["Travel"] + ["Planning"] → too broad, will become a dumping ground for all travel planning memories
+- GOOD: ["Travel"] + ["Japan", "Tokyo", "Accommodation"] → specific, bounded scope
+- BAD:  ["Technology"] + ["Programming"] → too vague
+- GOOD: ["Technology"] + ["Python", "Web Frameworks", "Django"] → precise sub-domain
+
+**ENTITY-TYPE SEPARATION:** When a branch contains both categories AND named entities (brands, organizations, specific places), add a grouping level to separate them.
+- BAD:  ["Clothing & Fashion"] + ["Sneakers", "Zara"] → mixes product types with brands
+- GOOD: ["Clothing & Fashion"] + ["Brands", "Zara"] → entity grouped under type
+- GOOD: ["Clothing & Fashion"] + ["Footwear", "Sneakers"] → product under category
+- BAD:  ["Food & Recipes"] + ["Pizza", "Dominos"] → mixes food type with brand
+- GOOD: ["Food & Recipes"] + ["Restaurants & Chains", "Dominos"]
+
+**DOMAIN ACCURACY:** The root domain must be the ONTOLOGICAL category of the topic, NOT the context in which the user encountered it.
+- BAD:  root=["Education"], branch=["Economy"] (just because the user was learning about it)
+- GOOD: root=["Economics"], branch=["Macroeconomics"]
+- BAD:  root=["Education"], branch=["Urban Planning"]
+- GOOD: root=["Public Policy"], branch=["Urban Planning"]
+- Rule: Ask yourself "Would this topic exist under this category in a library catalog?" If no, pick the correct domain.
 
 ### 4. FINAL INSTRUCTION
 Your output must be VALID JSON matching the ChatExtraction schema.

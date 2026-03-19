@@ -159,6 +159,8 @@ class DatabaseManager:
                 session.add(current_node)
                 session.flush()
             
+            parent_node = current_node
+            
         # Step 4: Enforce Leaf Node Constraint
         # Memories should only be attached to leaf nodes (nodes without children).
         # If the resolved path ends on a node that already has children,
@@ -184,10 +186,10 @@ class DatabaseManager:
             
         return current_node
 
-    def get_topic_tree_hints(self, max_depth=2):
+    def get_topic_tree_hints(self, max_depth=3):
         """
         Returns a formatted string of existing topic paths for prompt grounding.
-        Lightweight: just queries root + first two levels.
+        Lightweight: just queries root + first three levels.
         """
         session = self.Session()
         try:
@@ -203,6 +205,9 @@ class DatabaseManager:
                     if max_depth > 1:
                         for grandchild in child.children:
                             lines.append(f"    {grandchild.name}")
+                            if max_depth > 2:
+                                for ggchild in grandchild.children:
+                                    lines.append(f"      {ggchild.name}")
             
             return "\n".join(lines)
         finally:

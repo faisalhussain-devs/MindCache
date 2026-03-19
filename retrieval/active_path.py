@@ -45,6 +45,7 @@ class ActivePathRetrieval:
         
         # Phase 2: Root Search
         root_nodes = self.search.scan(ctx)
+        print("NORRROOOOT")
         if not root_nodes:
             return RetrievalResult(context="No relevant long-term memory found.")
 

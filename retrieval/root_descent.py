@@ -68,27 +68,31 @@ class RootDescent:
         self.db_manager = DatabaseManager()
         self.Session = self.db_manager.Session
 
-    def descend(self, root_node: Topic, ctx: RetrievalContext) -> list[CandidateTopic]:
+    def descend(self, root_nodes: list[Topic], ctx: RetrievalContext) -> list[CandidateTopic]:
         """
         Phase 3: Lean Descent.
-        Returns top-k candidates with name, path, sim_score, bm25_score, timestamp.
+        Returns top-k candidates combined from multiple root nodes.
         No descriptions or summaries sent to refiner.
         """
+        if not root_nodes:
+            return []
+            
         session = self.Session()
         all_candidates = []
         
         try:
-            root = session.get(Topic, root_node.id)
-            if not root:
-                return []
+            for root_node in root_nodes:
+                root = session.get(Topic, root_node.id)
+                if not root:
+                    continue
 
-            # Collect ALL matching nodes recursively
-            self._recursive_collect(
-                node=root, 
-                query_vec=ctx.query_vector,
-                candidates=all_candidates, 
-                current_path=[root.name]
-            )
+                # Collect ALL matching nodes recursively from this root
+                self._recursive_collect(
+                    node=root, 
+                    query_vec=ctx.query_vector,
+                    candidates=all_candidates, 
+                    current_path=[root.name]
+                )
 
             if not all_candidates:
                 return []
