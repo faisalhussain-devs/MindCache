@@ -1,18 +1,19 @@
 """
-MindCache Evaluation — Manual Conflict-Aware Grading Tool
+MindCache Evaluation - Automatic Evidence-Session Grading Tool
 
-For merged LongMemEval-M datasets where one DB contains memories from 
+For merged LongMemEval-M datasets where one DB contains memories from
 multiple questions (potential conflicts).
 
 Features:
 - Provenance tracking: shows which session each retrieved memory came from
-- Fault classification: evidence hit / base noise / merge artifact
+- Automatic grading: pass if a query evidence session appears in retrieved sources
 - Extraction pre-check: verifies evidence was actually captured
 - Clean results file: JSON + Markdown report with per-type scoring
 
 Usage:
   python eval/eval_manual_check.py --dataset eval/data/longmemeval_m_merged.json
 """
+
 import json
 import argparse
 import sys
@@ -32,7 +33,7 @@ from sqlalchemy import text
 from retrieval.context_bridge import ContextBridge, RetrievalConfig, RetrievalContext
 from retrieval.root_search import RootSearch
 from retrieval.root_descent import RootDescent
-from Database.embedder import EmbeddingManager
+from embedder import EmbeddingManager
 
 _embedder = None
 def get_embedder():
@@ -40,6 +41,47 @@ def get_embedder():
     if _embedder is None:
         _embedder = EmbeddingManager()
     return _embedder
+
+
+def normalize_session_ids(value) -> set:
+    """Return a normalized set of source session IDs."""
+    if value is None:
+        return set()
+
+    if isinstance(value, (list, tuple, set)):
+        return {str(v) for v in value if v not in (None, "")}
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return set()
+
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {raw}
+
+        if isinstance(parsed, list):
+            return {str(v) for v in parsed if v not in (None, "")}
+        if parsed in (None, ""):
+            return set()
+        return {str(parsed)}
+
+    return {str(value)}
+
+
+def format_session_ids(session_ids: set) -> str:
+    """Format a set of source session IDs for console/report display."""
+    if not session_ids:
+        return "-"
+    return json.dumps(sorted(session_ids), ensure_ascii=False)
+
+
+def get_evidence_ids(test_case: dict) -> set:
+    """Read evidence session IDs from either supported dataset field."""
+    return normalize_session_ids(
+        test_case.get("evidence_ids", test_case.get("evidence_session_ids", []))
+    )
 
 
 def load_dataset(path: str) -> dict:
@@ -61,7 +103,7 @@ def load_dataset(path: str) -> dict:
     
     # Collect evidence session IDs per question
     for tc in test_cases:
-        ev_ids = set(tc.get("evidence_session_ids", []))
+        ev_ids = get_evidence_ids(tc)
         evidence_by_question[tc.get("question_id", "")] = ev_ids
         injected_session_ids.update(ev_ids)
     
@@ -99,19 +141,19 @@ def extraction_precheck(test_cases: list) -> dict:
     captured = 0
     missed = 0
     
+    extracted_session_ids = set()
+    for (source_session_id,) in db_session.query(TriadBlock.source_session_id).all():
+        extracted_session_ids.update(normalize_session_ids(source_session_id))
+
     for tc in test_cases:
         q_id = tc.get("question_id", "")
-        ev_ids = tc.get("evidence_ids", [])
+        ev_ids = get_evidence_ids(tc)
         
         found_ids = []
         missing_ids = []
         
         for ev_id in ev_ids:
-            count = 0
-            for block in db_session.query(TriadBlock).all():
-                if block.source_session_id and ev_id in block.source_session_id:
-                    count += 1
-            if count > 0:
+            if ev_id in extracted_session_ids:
                 found_ids.append(ev_id)
                 captured += 1
             else:
@@ -144,14 +186,13 @@ def retrieve_with_provenance(query: str, config: RetrievalConfig = None) -> dict
     
     root_search = RootSearch(config, bridge)
     root_nodes = root_search.scan(ctx)
-    
+
     if root_nodes is None:
         return {
             "root_name": None,
             "memories": [],
             "latency_s": 0,
         }
-    
     descent = RootDescent(config, bridge)
     candidates = descent.descend(root_nodes, ctx)
     
@@ -192,16 +233,18 @@ def retrieve_with_provenance(query: str, config: RetrievalConfig = None) -> dict
     }
 
 
-def classify_source(session_id: str, evidence_ids: set, base_ids: set) -> str:
+def classify_source(session_ids, evidence_ids: set, base_ids: set) -> str:
     """Classify a retrieved memory's source."""
-    if session_id is None:
+    session_id_set = normalize_session_ids(session_ids)
+    if not session_id_set:
         return "unknown"
-    if session_id in evidence_ids:
-        return "evidence"     # ✅ From this question's evidence
-    elif session_id in base_ids:
-        return "base"         # ⚠️ From the base haystack (noise)
-    else:
-        return "injected"     # ⚠️ From another question's injection (merge artifact)
+    if session_id_set & evidence_ids:
+        return "evidence"     # From this question's evidence
+    if any(sid not in base_ids for sid in session_id_set):
+        return "injected"     # From another question's injection (merge artifact)
+    if session_id_set & base_ids:
+        return "base"         # From the base haystack (noise)
+    return "unknown"
 
 
 def run_eval(dataset_path: str, output_dir: str = "eval/results"):
@@ -224,13 +267,9 @@ def run_eval(dataset_path: str, output_dir: str = "eval/results"):
         if info["missing"]:
             print(f"  ⚠️  {q_id}: missing {info['missing']}")
     
-    print(f"\n--- Starting Manual Evaluation ---")
-    print("For each question, grade the retrieved context:")
-    print("  [P]ass    = Correct answer found in retrieved memories")
-    print("  [F]ail    = Correct answer NOT found")
-    print("  [C]onflict = Correct answer found + conflicting info also present")
-    print("  [S]kip    = Skip this question")
-    print("  [Q]uit    = Save and exit\n")
+    print(f"\n--- Starting Automatic Evaluation ---")
+    print("A question PASSES when any retrieved memory points to one of that question's")
+    print("evidence sessions. Otherwise it FAILS.\n")
     
     results = []
     
@@ -240,7 +279,7 @@ def run_eval(dataset_path: str, output_dir: str = "eval/results"):
             q_text = tc.get("question", "")
             q_type = tc.get("question_type", "unknown")
             expected = tc.get("answer", "")
-            ev_ids = set(tc.get("evidence_ids", []))
+            ev_ids = get_evidence_ids(tc)
             
             print(f"\n{'='*70}")
             print(f"  QUESTION {i+1}/{len(test_cases)} [{q_type}]  ID: {q_id}")
@@ -275,47 +314,41 @@ def run_eval(dataset_path: str, output_dir: str = "eval/results"):
                 print("  [NO MEMORIES RETRIEVED]")
             
             classified_memories = []
+            retrieved_session_ids = set()
             for j, mem in enumerate(retrieval["memories"]):
+                memory_session_ids = normalize_session_ids(mem["source_session_id"])
+                retrieved_session_ids.update(memory_session_ids)
                 source_type = classify_source(
-                    mem["source_session_id"], ev_ids, ds["base_session_ids"]
+                    memory_session_ids, ev_ids, ds["base_session_ids"]
                 )
                 
                 # Icon
-                icon = {"evidence": "✅", "base": "⚠️", "injected": "⚠️", "unknown": "❓"}[source_type]
+                icon = {"evidence": "OK", "base": "!", "injected": "!", "unknown": "?"}[source_type]
                 label = {"evidence": "EVIDENCE", "base": "BASE", "injected": "INJECTED", "unknown": "UNKNOWN"}[source_type]
+                source_display = format_session_ids(memory_session_ids)
                 
                 print(f"  {j+1}. [{mem['type']}] {mem['content'][:120]}")
-                print(f"     → Session: {mem['source_session_id']}  {icon} {label}")
+                print(f"     -> Session(s): {source_display}  {icon} {label}")
                 
                 classified_memories.append({
                     "content": mem["content"],
                     "type": mem["type"],
                     "topic": mem["topic"],
-                    "source_session": mem["source_session_id"],
+                    "source_session": source_display,
+                    "source_session_ids": sorted(memory_session_ids),
                     "source_type": source_type,
                 })
             
             print(f"{'-'*50}")
-            
-            # Grade
-            while True:
-                choice = input("\nGrade [P]ass / [F]ail / [C]onflict / [S]kip / [Q]uit: ").strip().lower()
-                if choice in ['p', 'pass']:
-                    grade = "pass"; break
-                elif choice in ['f', 'fail']:
-                    grade = "fail"; break
-                elif choice in ['c', 'conflict']:
-                    grade = "conflict"; break
-                elif choice in ['s', 'skip']:
-                    grade = "skip"; break
-                elif choice in ['q', 'quit']:
-                    print("Saving and quitting...")
-                    _save_results(results, ds, ext_check, output_dir)
-                    return
-            
-            if grade == "skip":
-                print("Skipped.")
-                continue
+
+            matched_evidence_sessions = sorted(ev_ids & retrieved_session_ids)
+            grade = "pass" if matched_evidence_sessions else "fail"
+
+            print("\nAUTOMATIC CHECK:")
+            print(f"  Query evidence sessions:    {format_session_ids(ev_ids)}")
+            print(f"  Retrieved source sessions:  {format_session_ids(retrieved_session_ids)}")
+            print(f"  Matched evidence sessions:  {format_session_ids(set(matched_evidence_sessions))}")
+            print(f"  Grade: {grade.upper()}")
             
             results.append({
                 "question_id": q_id,
@@ -324,6 +357,8 @@ def run_eval(dataset_path: str, output_dir: str = "eval/results"):
                 "expected": expected,
                 "evidence_sessions": list(ev_ids),
                 "evidence_captured": ext_info.get("captured", False),
+                "retrieved_source_sessions": sorted(retrieved_session_ids),
+                "matched_evidence_sessions": matched_evidence_sessions,
                 "retrieved_memories": classified_memories,
                 "root_found": retrieval["root_name"],
                 "grade": grade,
@@ -453,6 +488,9 @@ def _write_report(path: str, data: dict):
         lines.append(f"**Expected**: {r['expected']}")
         lines.append(f"**Grade**: {r['grade'].upper()}")
         lines.append(f"**Root**: {r.get('root_found', 'N/A')}")
+        lines.append(f"**Evidence Sessions**: {format_session_ids(set(r.get('evidence_sessions', [])))}")
+        lines.append(f"**Retrieved Source Sessions**: {format_session_ids(set(r.get('retrieved_source_sessions', [])))}")
+        lines.append(f"**Matched Evidence Sessions**: {format_session_ids(set(r.get('matched_evidence_sessions', [])))}")
         lines.append(f"**Latency**: {r.get('latency_s', 0):.2f}s")
         lines.append("")
         

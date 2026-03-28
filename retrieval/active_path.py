@@ -2,7 +2,7 @@ import json
 from typing import Optional
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
-from Database.embedder import EmbeddingManager
+from embedder import EmbeddingManager
 from Database.db_setup import (
     engine, Topic, EpisodicMemory,
     UserMemory, KnowledgeMemory, DecisionMemory

@@ -1,15 +1,18 @@
 from torch import chunk
 import json
+import os
 import numpy as np
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
 from Database.db_setup import engine, Topic, TopicEmbeddingCache
-from Database.embedder import EmbeddingManager
+from embedder import EmbeddingManager
 from Memory_extract.safe_ai import SafeAI
 from retrieval.root_descent import BM25Scorer
 from pydantic import BaseModel, Field
 from typing import List, Union, Optional
 from collections import defaultdict
+
+ROOT_ORTHO_STATE_FILE = os.path.join(os.path.dirname(__file__), ".root_orthogonality_state.json")
 
 class ReorganizedNode(BaseModel):
     id: Union[int, str] = Field(description="Original ID of the node.")
@@ -28,7 +31,7 @@ class SubCategory(BaseModel):
 class LeafSplitSchema(BaseModel):
     sub_categories: List[SubCategory] = Field(description="List of sub-categories to split the overloaded leaf into. Each memory ID must appear in exactly one sub-category.")
 
-TOKEN_LIMIT = 6000
+TOKEN_LIMIT = 30000
 
 def estimate_tokens(text: str) -> int:
     return len(text) // 4
@@ -92,6 +95,21 @@ def _would_create_cycle(node_map, child_id, proposed_parent_id):
         curr_id = curr_node.parent_id if curr_node else None
     return False
 
+def _load_last_root_count():
+    try:
+        with open(ROOT_ORTHO_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("root_count")
+    except Exception:
+        return None
+
+def _save_last_root_count(root_count):
+    try:
+        with open(ROOT_ORTHO_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"root_count": root_count}, f)
+    except Exception as e:
+        print(f"[Root Orthogonality] Warning: failed to persist root count: {e}")
+
 def update_leaf_embedding_cache(session, nodes, embedder):
     """Updates the embedding cache for leaf nodes. Can be called standalone after any tree mutation."""
     leaf_nodes = [n for n in nodes if not n.children]
@@ -123,7 +141,22 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, children_map
         nodes_data = data.get("modified_nodes_only", [])
     except json.JSONDecodeError as e:
         print(f"JSON Error: {e}\n")
-        return
+        print("Attempting to repair truncated JSON...")
+        try:
+            # Find the last properly closed JSON object "}"
+            last_brace = raw_json.rfind('}')
+            if last_brace != -1:
+                # Truncate and close out the JSON array and root object
+                repaired_json = raw_json[:last_brace+1] + "\n]}"
+                data = json.loads(repaired_json)
+                nodes_data = data.get("modified_nodes_only", [])
+                print(f"Successfully rescued {len(nodes_data)} node changes from truncated output.")
+            else:
+                print("Could not find a valid object brace to repair.")
+                return
+        except Exception as repair_e:
+            print(f"Repair failed: {repair_e}\n")
+            return
     auto_adjusted_node_ids = set()  # internal safety moves (not explicit LLM intent)
     
     # 1. Create NEW Parents (case-insensitive, stored as dict for lookup)
@@ -273,8 +306,8 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, children_map
                     pass
             elif not is_override:
                 # Only allow making root if NOT a merge-override (prevent accidental root elevation)
-                db_node.parent = None
-                print(f"  STEP3-ROOT: '{db_node.name}' (ID {node_id}): parent {old_pid} → NULL (elevated to root)")
+                    db_node.parent = None
+                    print(f"  STEP3-ROOT: '{db_node.name}' (ID {node_id}): parent {old_pid} → NULL (elevated to root)")
             
         successfully_mapped_nodes.append(db_node)
     
@@ -442,59 +475,130 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, children_map
     return successfully_mapped_nodes
 
 
+def pass_root_orthogonality(session, children_map=None, node_map=None):
+    """Phase 0: Focused root orthogonality pass. Sends ONLY roots + their descriptions to the LLM."""
+    print(" PHASE 0: ROOT ORTHOGONALITY CHECK")
+    ai = SafeAI()
+    
+    # Build lightweight root-only context: root name + description + optional direct child names for disambiguation
+    all_roots = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
+    lines = []
+    for root in all_roots:
+        desc = (root.description or "").strip()
+        desc_block = f"description: {desc}" if desc else "description: (none)"
+        lines.append(f"ROOT {root.id}: {root.name} | {desc_block}")
+    
+    root_tree_text = "\n".join(lines)
+    root_tokens = estimate_tokens(root_tree_text)
+    print(f"  Root tree tokens: ~{root_tokens}")
+    
+    system_prompt = "You are an expert knowledge architect. Your ONLY job is to consolidate nearly identical or clearly nested root domains. Output valid JSON."
+    
+    prompt = f"""
+    You are an expert knowledge architect. Below are the ROOT DOMAINS of a knowledge tree with their descriptions and a small child-name summary.
+    
+    YOUR ONLY TASK: Merge roots only when they are clearly redundant or one is a true subset of the other.
+    
+    HOW TO MAKE CHANGES:
+    - To MERGE overlapping roots: output {{"id": <absorbed_root_id>, "merged_into_id": <surviving_root_id>}}
+      The absorbed root becomes a child of the surviving root. All its children move with it automatically by the code.
+    - To MOVE a root UNDER another root: output {{"id": <child_root_id>, "parent_id": <parent_root_id>}}
+    - To RENAME a root: output {{"id": <root_id>, "name": "Better Name"}}
+    
+    CRITICAL RULES:
+
+     0. MERGE THRESHOLD (STRICT): Only merge roots for one of these cases:
+         - exact duplicate / same concept
+         - obvious subset of a broader root
+         - same user-intent domain where both roots would answer the same query
+         Do NOT merge just because two roots are vaguely related.
+    
+     1. DO NOT MERGE ACROSS DIFFERENT INTENT TYPES:
+         - belief system vs celestial mechanics
+         - science vs education
+         - books vs education
+         - abstract worldview vs practical domain
+         If the user would search them for different reasons, keep them separate.
+
+     2. RENAME AFTER MERGE (MANDATORY): When you merge domains that go beyond the surviving root's original name,
+       you MUST also output a rename for the surviving root to encompass ALL absorbed domains.
+       - Example: If you merge "Religion" and "Astrology" into "Philosophy", you MUST rename "Philosophy" to 
+         "Philosophy & Belief Systems" or "Worldview & Beliefs" — something that covers all absorbed content.
+       - The point: the surviving root's name must still make sense as a retrieval label for ALL its content.
+    
+     3. DO NOT OVER-MERGE: Query overlap alone is not enough. Merge only when one root is clearly redundant or nested.
+         - "Research Ethics" and "Research Methods" → MAY MERGE only if the descriptions show they are not distinct intent domains.
+         - "Home Decor" and "Home Maintenance" → MAY MERGE only if their descriptions show near-total overlap.
+         - "Religion" and "Philosophy" → DO NOT MERGE.
+         - "Astrology" and "Esoteric Beliefs" → DO NOT MERGE unless the descriptions explicitly show they are the same taxonomy bucket.
+         - "Science" and "Education" → DO NOT MERGE.
+         - "Books" and "Education" → DO NOT MERGE.
+    
+     4. NICHE SUBSET MERGE: A tiny niche root that is clearly a subset of a broader root should be absorbed.
+       - "Space Exploration" with only a few children → merge under "Science"
+       - "Mathematics" is a standalone domain → keep separate UNLESS it only has 1-2 children
+    
+     5. IGNORE STRUCTURAL GENERAL NODES: Do NOT merge "General [Topic]" into "[Topic]".
+    
+     6. OUTPUT ONLY CHANGED NODES. Do NOT re-output roots that are already correct.
+       If no changes are needed, output: {{"modified_nodes_only": []}}
+    
+     CURRENT ROOTS WITH DESCRIPTIONS:
+    {root_tree_text}
+    """
+    
+    all_nodes = session.query(Topic).all()
+    result = apply_mapping(session, ai, prompt, system_prompt, all_nodes, children_map=children_map, node_map=node_map)
+    print(" ROOT ORTHOGONALITY PASS COMPLETE.\n")
+    return result
+
+
 def pass_global_bootstrap(session, full_tree_text, children_map=None, node_map=None):
     print(" PHASE 1: GLOBAL BOOTSTRAP (SMALL DB)")
     ai = SafeAI()
     
-    system_prompt = "You are an expert taxonomist restructuring a messy category tree into a clean, well-organized taxonomy. Output valid JSON."
+    system_prompt = "You are an expert knowledge architect optimizing a messy category tree into a clean, redundancy-free knowledge graph for AI retrieval. Output valid JSON."
     
     prompt = f"""
-    You are an expert taxonomist. Restructure the messy category graph below into a clean, multi-rooted taxonomy.
+    You are an expert knowledge architect. Restructure the messy category graph below into a clean, multi-rooted knowledge tree optimized for semantic retrieval.
     
     HOW TO MAKE CHANGES:
     - To RENAME a node: output {{"id": <existing_id>, "name": "New Name"}}
     - To MOVE a node under a different parent: output {{"id": <existing_id>, "parent_id": <new_parent_id>}}
-    - To MAKE a node a root: output {{"id": <existing_id>, "parent_id": null}}. Use a specific descriptive name (rename the node if needed). NEVER use generic names like "root", "general", "misc", or "other".
+    - To MAKE a node a root: output {{"id": <existing_id>, "parent_id": null}}. NEVER use generic names like "root", "general", "misc", or "other".
     - To MERGE duplicates: output {{"id": <duplicate_id>, "merged_into_id": <primary_id>}}
-      NOTE: Merges automatically re-parent all children of the deleted node under the target.
-      HOWEVER — if a child does NOT semantically belong under the merge target, you MUST output a SEPARATE parent_id change for that child to redirect it to the correct parent.
-      Example: Merging duplicate "Food & Recipes" moves child "Cartagena, Colombia" under Food — but Cartagena is a location, so output: {{"id": <cartagena_id>, "parent_id": <travel_root_id>}} to redirect it.
-    - ALWAYS prefer using parent_id: null to elevate an existing node to root. Do NOT use NEW_ prefixes — there is almost never a need to create a brand new node when you can elevate an existing one.
+      NOTE: Merges automatically re-parent all children of the deleted node.
+      HOWEVER — if a child does NOT semantically belong under the merge target, output a SEPARATE parent_id change to redirect it.
+    - DO NOT elevate nodes to root (parent_id: null) or create new roots (NEW_ prefix). Root structure is already finalized.
     
-    MANDATORY FIXES (do these FIRST):
-    A. If ANY node is named "root", "general", "misc", or "other" — either RENAME it or ELEVATE its children to be independent roots and let it be deleted as empty.
-    B. If the tree has a single mega-root with many unrelated domain children — ELEVATE each domain child to root by setting its parent_id to null. Do NOT create NEW_ roots for concepts that already exist as nodes in the tree! Use their existing IDs.
-    C. SCAN ALL root-level branches. If a root has fewer than 4 nodes total (including children), it is likely misplaced. Move the ENTIRE small branch under the most relevant larger root. Examples:
-       - "Bali" with children "Mount Batur" and "Uluwatu" → move under "Travel" → "International Travel Destinations"
-       - "Futures Studies" → move under "Education" or "Research"  
-       - "Fine Arts" → merge with or move under "Entertainment & Media"
-       - A lone leaf root with memories should NEVER remain a root — always place it under a domain.
-    D. CHECK for nodes under the WRONG parent. Examples:
-       - "Forex Brokers" and "Liquidity Providers" under "Business & Management" should be under "Personal Finance" → "Financial Markets"
-       - "Analytics" under "Business & Management" should be under "Marketing" or "Technology"
+    MANDATORY FIXES:
+    A. DO NOT BREAK EXISTING ROOTS OR HIERARCHIES: Do not elevate nodes to roots unless absolutely necessary. Maintain the existing root domains (e.g. keep "Literature" and "Music" under "Arts & Entertainment" if they are already there). 
+    B. IGNORE STRUCTURAL GENERAL NODES (CRITICAL): You will see many leaf nodes named "General [Topic]" sitting under a parent named "[Topic]" (e.g. "General Business" under "Business").
+       - DO NOT MERGE THESE! They are structurally required placeholder nodes that hold memories belonging to the parent concept.
+       - NEVER merge "General [Topic]" into "[Topic]". Leave them exactly where they are.
+    C. ELIMINATE SCATTERED REDUNDANCY (CRITICAL): If the same concept (e.g., "Rome") appears in multiple places across a single domain, MERGE them or structure them hierarchically. 
+       - DO NOT leave redundant nodes like "Italy", "Rome", "Europe Trip Planning" scattered as siblings or disjointed roots.
+       - INSTEAD, build a proper knowledge tree hierarchy: "Europe Trip Planning" -> "Italy" -> "Rome" -> "Vatican". 
+       - Move related geographical or conceptual sub-topics properly under their broader parent nodes to make retrieval easy.
     
-    STRUCTURAL RULES:
-    1. ROOTS = DISTINCT DOMAINS: Each root should represent a topic that is fundamentally different from every other root — so different that a similarity search would never confuse them. "Travel" and "Career" are clearly distinct → separate roots. "Society" and "Culture" are too similar → merge into one. If a small root overlaps with a larger root, absorb it. Examples:
-       - "Society" (Feminism, Gender Norms) → absorb into "Culture"
-       - "Political Science & Governance" (1 branch) → absorb into "Culture"
-       - "Personal Development" (Reading, Volunteering) → absorb into "Productivity" or "Education"
-       - "Family Relationships" (Child Activities) → absorb into "Culture" or "Health & Wellness"
-    2. MERGE DUPLICATES: Keep one, set the other's merged_into_id.
-    3. NATURAL DEPTH: Use as many levels as needed to organize information clearly — don't flatten OR pad. If a topic naturally has sub-sub-topics (e.g., Travel → International → Japan → Kichijoji), let it be deep. If a topic is simple (e.g., Literature → Book Recommendations), keep it shallow. Don't leave 20+ children under one parent — group them into meaningful sub-categories.
-    4. NO NAME REPETITION: A child must never share its name with its parent or any ancestor. If found, FLATTEN by moving the child's children up to the parent and deleting the duplicate-named child.
-    5. BREAK CHIMERA CHAINS: Split branches that mix unrelated topics.
-    6. FLATTEN WRAPPERS: Remove single-child intermediary nodes with no semantic value.
-    7. COHERENT GROUPING: "Technology" and "Travel" should NOT be siblings under "Sustainable Living" — they are different domains.
-    8. CONSOLIDATE OVERLAPPING ROOTS: If two roots cover overlapping concepts, keep the broader one and absorb the other. But keep genuinely distinct domains as separate roots even if they are small — a small root that is semantically unique (e.g., "Spirituality") is fine.
-    9. SEMANTIC ACCURACY: Every node must be under a semantically correct parent. "Yoga" is NOT a "Team Sport" — it belongs under "Health & Wellness". Double-check every parent-child relationship makes logical sense.
-    10. ONTOLOGICAL PLACEMENT: Place nodes by what they ARE, not where the user encountered them. "Economy" is NOT a child of "Education" — it belongs under "Economics" or "Business & Management". "Urban Planning" is NOT under "Education" — it's under "Public Policy" or "Cities & Infrastructure". Ask: "Would a library catalog place this topic here?"
-    11. ENTITY-TYPE GROUPING: When siblings mix categories and named entities (brands, organizations, specific places), create grouping sub-levels. Example: Clothing & Fashion > [Sneakers, Zara] is wrong → split into Clothing & Fashion > Brands > [Zara] and Clothing & Fashion > Footwear > [Sneakers].
-    12. OVERLOADED NODES: If any parent has 20+ direct children, group them into meaningful sub-categories. Don't leave a flat list of 20 siblings — organize them.
+    STRUCTURAL RULES & CONSTRAINTS:
+    1. ROOT ORTHOGONALITY (CRITICAL): Roots must be mutually exclusive domains to make retrieval easy. If two roots overlap heavily, merge them.
+    2. SIBLING ORTHOGONALITY (CRITICAL): Siblings must be mutually exclusive partitions, NOT semantic variations. 
+       - Example (Bad): "Personal Experience", "Personal Opinions", "Personal Preferences". These overlap and break retrieval.
+       - Example (Good): "Subjective Feedback", "Objective Information". 
+       - If you see siblings with semantic overlap, MERGE them into a single node. Ask: "If I remove this node, what queries become impossible to classify?" If another sibling would catch it, merge them.
+    3. MERGE DUPLICATES IMMEDIATELY: Redundancy destroys retrieval. If two nodes represent the exact same concept, merge them.
+    4. FIT INTO EXISTING CONCEPTUAL PATHS (CONSTRAINED POWER): You are organizing the user's existing mental model, NOT replacing it with an ontologically rigid library catalog. Fix redundancy and orthogonality, but do NOT arbitrarily shift an established node from one Root Domain to a completely different Root Domain over ontological disagreements.
+    5. RETRIEVAL-FRIENDLY HIERARCHY: Build a logical "knowledge tree" where the path from root to leaf makes sense for someone querying for information. Don't flatten natural hierarchies (Region -> Country -> City). Let it nest naturally.
+    6. NO NAME REPETITION: A child must never share its name with its parent or any ancestor. If found, FLATTEN.
+    7. FLATTEN POINTLESS WRAPPERS: Remove single-child intermediary nodes with no semantic value, UNLESS they hold important hierarchical meaning (like a Country node).
     
     OUTPUT RULES:
-    13. Only output nodes that NEED changes. Omit nodes that are already correct.
+    8. STRICT OUTPUT LIMIT: Only output nodes that NEED changes. Omit any node that is already correct.
+       - DO NOT RE-OUTPUT THE ENTIRE TREE. If you return nodes that you did not change, you will crash the system due to token limits.
+       - Your output must be a concise JSON array of ONLY the specific nodes whose name, parent_id, or merged_into_id you actively modified.
     
-    IMPORTANT: To make a node a root, set parent_id: null. Do NOT create NEW_ roots — elevate existing nodes instead. NEVER create a root called "root", "general", or similar generic names.
+    IMPORTANT: Do NOT create new root nodes. Root structure is already finalized by Phase 0.
     
     ALL NODES:
     {full_tree_text}
@@ -741,42 +845,44 @@ def pass_targeted_vector(session, full_tree_text, top_k=3, parent_map=None, chil
         print(f"\n-> Grooming {len(batch_messy_texts)} messy chains (~{batch_token_count} tokens) against {len(batch_groomed_root_ids)} groomed branches...")
         
         prompt = f"""
-        You are an expert taxonomist. Integrate new messy branches into the existing groomed tree.
+        You are an expert knowledge architect. Integrate new messy branches into the existing groomed knowledge tree to optimize retrieval.
         
         CONTEXT: Branches marked [ESTABLISHED] are already organized. Branches marked [NEW MESSY] are new and need integration.
-        You may ALSO fix issues in [ESTABLISHED] branches if you spot misplacements, duplicates, or name repetitions.
+        You may ALSO fix issues in [ESTABLISHED] branches if you spot misplacements, scattered redundancy, or duplicates, but strictly obey the constraints below.
         
         HOW TO MAKE CHANGES:
         - To MOVE a node under a different parent: output {{"id": <existing_id>, "parent_id": <new_parent_id>}}
         - To MERGE duplicates: output {{"id": <duplicate_id>, "merged_into_id": <primary_id>}}
-          NOTE: Merges automatically re-parent all children of the deleted node under the target.
-          HOWEVER — if a child does NOT semantically belong under the merge target, you MUST output a SEPARATE parent_id change for that child to redirect it to the correct parent.
         - To RENAME: output {{"id": <existing_id>, "name": "New Name"}}
         - To make a node a root: output {{"id": <existing_id>, "parent_id": null}}
         
         HOW TO PROCESS NEW MESSY BRANCHES:
         1. Look at ONLY the leaf nodes (nodes with memories) in each messy branch.
         2. For each leaf, find the most semantically appropriate EXISTING groomed parent node by its ID.
-        3. Re-parent the leaf DIRECTLY under that groomed parent — do NOT preserve the messy chain structure.
-        4. The empty intermediate nodes (those without memories) will be auto-deleted by the system.
+        3. Re-parent the leaf DIRECTLY under that groomed parent.
         
-        CRITICAL RULES:
-        1. BREAK CHIMERA CHAINS: Messy branches contain chains of unrelated topics. NEVER preserve these chains. Extract each leaf independently and place it under its correct groomed parent.
-        2. MERGE DUPLICATES: If a messy leaf duplicates an existing groomed node (same concept), set merged_into_id to the groomed node's ID. Also merge same-name siblings under the same parent.
-        3. USE EXISTING GROOMED IDS: Always re-parent into existing groomed branch IDs. Do NOT create new intermediate nodes that duplicate existing names.
-        4. NO ORPHAN LEAVES: Every leaf must be placed under a meaningful parent.
-        5. NATURAL DEPTH: Use as many levels as needed — don't flatten OR pad artificially.
-        6. NO NAME REPETITION: A child must never share its name with its parent or any ancestor. If found, FLATTEN by moving the child's children up to the parent.
-        7. SEMANTIC ACCURACY: Every node must be under a semantically correct parent. "Yoga" is NOT a "Team Sport". "Cartagena, Colombia" is NOT under "Food & Recipes".
-        8. FIX ESTABLISHED ISSUES: If you see problems in [ESTABLISHED] branches (misplaced nodes, duplicates, name repetition), fix them too.
-        9. ONTOLOGICAL PLACEMENT: Place nodes by what they ARE, not where the user encountered them. "Economy" is NOT a child of "Education". "Urban Planning" is NOT under "Education". Ask: "Would a library catalog place this topic here?"
-        10. ENTITY-TYPE GROUPING: When siblings mix categories and named entities (brands, organizations, places), create grouping sub-levels to separate them.
-        11. OVERLOADED NODES: If any parent has 20+ direct children, group them into meaningful sub-categories.
+        CRITICAL RULES & CONSTRAINTS:
+        1. ELIMINATE REDUNDANCY: If a messy leaf duplicates an existing groomed node (same concept), set merged_into_id to the groomed node's ID. Redundancy destroys retrieval.
+        2. IGNORE STRUCTURAL GENERAL NODES (CRITICAL): You will see leaf nodes named "General [Topic]" sitting under a parent named "[Topic]" (e.g. "General Business" under "Business"). 
+           - DO NOT MERGE THESE! They are structurally required to hold memories for the parent node.
+           - NEVER merge "General [Topic]" into "[Topic]".
+        3. NO AGGRESSIVE ROOT SPLITTING: Do not arbitrarily burst existing hierarchies into dozens of tiny new roots. Nest topics naturally without aggressively flattening.
+        4. RETRIEVAL-FRIENDLY HIERARCHY: Build a proper "knowledge tree". Example: Do NOT scatter "Italy", "Rome", "Europe Trip" as siblings. Nest them correctly (Europe -> Italy -> Rome) so the path makes logical sense.
+        5. SIBLING ORTHOGONALITY (CRITICAL): Siblings must be mutually exclusive partitions, NOT semantic variations. 
+           - Bad: "Personal Experience", "Personal Opinions", "Personal Preferences".
+           - Good: "Subjective Feedback", "Objective Information".
+           - MERGE siblings with semantic overlap into a single node. Ask: "If I remove this node, what queries become impossible to classify?" If another sibling would catch it, merge them.
+        6. USE EXISTING GROOMED IDS: Always re-parent into existing groomed branch IDs.
+        7. NO ORPHAN LEAVES: Every leaf must be placed under a meaningful parent.
+        8. NO NAME REPETITION: A child must never share its name with its parent or any ancestor.
+        9. SEMANTIC ACCURACY: Every node must be under a semantically correct parent.
         
         OUTPUT RULES:
-        12. Only output nodes that NEED changes. Omit nodes that are already correct.
-        13. Output leaf nodes (with memories) that need re-parenting or merging. Do NOT output empty intermediate nodes.
-        14. Do NOT output parent_id as NEW_Root, NEW_General, NEW_Misc..
+        9. STRICT OUTPUT LIMIT: Only output nodes that NEED changes. Omit nodes that are already correct.
+           - DO NOT RE-OUTPUT UNCHANGED NODES. If you return nodes that you did not change, you will crash the system due to token limits.
+        10. Output leaf nodes (with memories) that need re-parenting or merging.
+        11. Do NOT output parent_id as NEW_Root, NEW_General, NEW_Misc..
+        
         EXISTING GROOMED BRANCHES [ESTABLISHED] (use these IDs as parent_id or merged_into_id targets):
         {groomed_context_text}
         
@@ -1062,6 +1168,8 @@ def reorganize_tree(dry_run=True):
     session = Session()
     try:
         all_roots = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
+        current_root_count = len(all_roots)
+        last_root_count = _load_last_root_count()
         full_tree_text = ""
         for r in all_roots:
             full_tree_text += build_branch_text(r)
@@ -1077,6 +1185,11 @@ def reorganize_tree(dry_run=True):
             if t.parent_id is not None:
                 children_map[t.parent_id].append(t)
         parent_map = {t.id: topic_by_id.get(t.parent_id) for t in topics}
+        if last_root_count == current_root_count:
+            print(f"[Root Orthogonality] Skipping Phase 0: root count unchanged at {current_root_count}.")
+        else:
+            pass_root_orthogonality(session, children_map=children_map, node_map=topic_by_id)
+            _save_last_root_count(current_root_count)
         
         if total_tokens < TOKEN_LIMIT:
             nodes = pass_global_bootstrap(session, full_tree_text, children_map=children_map, node_map=topic_by_id)

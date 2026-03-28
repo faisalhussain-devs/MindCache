@@ -5,6 +5,7 @@ from Database.db_manager import DatabaseManager
 from retrieval.structs import RetrievalContext, RetrievalConfig, CandidateTopic
 from retrieval.context_bridge import ContextBridge
 import re
+import numpy as np
 
 class BM25Scorer:
     """Lightweight BM25 scorer for topic name + description."""
@@ -97,16 +98,15 @@ class RootDescent:
             if not all_candidates:
                 return []
 
-            # BM25 scoring across all collected candidates
+            # BM25 scoring using chain path text for keyword matching
             bm25 = BM25Scorer()
-            docs = [f"{c['name']} {c['description']}" for c in all_candidates]
+            docs = [c['description'] for c in all_candidates]
             bm25.fit(docs)
             
             for i, c in enumerate(all_candidates):
-                bm25_score = bm25.score(ctx.query_text, i)
-                c['bm25_score'] = bm25_score
-                # Combined score for ranking (weighted average)
-                c['combined'] = (c['sim_score'] * 0.6) + (bm25_score * 0.4)
+                raw_bm25 = bm25.score(ctx.query_text, i)
+                c['bm25_score'] = min(raw_bm25 / 15.0, 1.0)  # Bounded normalization
+                c['combined'] = (c['sim_score'] * 0.8) + (c['bm25_score'] * 0.2)
 
             # Sort by combined score, take top-k
             all_candidates.sort(key=lambda x: x['combined'], reverse=True)
@@ -135,7 +135,6 @@ class RootDescent:
         children = node.children
         if not children:
             return
-
         for child in children:
             if child.embedding is None:
                 continue
@@ -155,7 +154,7 @@ class RootDescent:
                     'topic_id': child.id,
                     'sim_score': float(sim_score),
                     'bm25_score': 0.0,  # Filled after BM25 fit
-                    'description': child.description or "",  # Used for BM25 only, not sent to refiner
+                    'description': path_str + child.description,  # Chain path for BM25 keyword matching
                     'timestamp': ts,
                     'is_leaf': is_leaf
                 })

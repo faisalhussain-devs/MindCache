@@ -35,7 +35,7 @@ class SafeAI:
         prompt: str,
         system_prompt: str | None = None,
         temperature: float = 0.1,
-        max_tokens: int = 64000,
+        max_tokens: int = 128000,
         json_schema: dict | None = None,
         retries: int = 5,
     ):

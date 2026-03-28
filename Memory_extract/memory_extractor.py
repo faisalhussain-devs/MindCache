@@ -63,6 +63,13 @@ The full topic path is: topics_root + topics_branch. Combined, this should be 2-
 - Use SHALLOW chains (2-3 total) for broad topics: ["Travel"] + ["Packing Tips"] → Travel > Packing Tips
 - Use DEEPER chains (4-5+ total) for specific sub-domains: ["Technology"] + ["Cloud Computing", "AWS", "Lambda"] → Technology > Cloud Computing > AWS > Lambda
 - Each level should add meaningful specificity. Don't add levels that are just synonyms of the parent.
+
+**ORTHOGONAL SIBLINGS ONLY (CRITICAL):** When formulating your `topics_branch`, verify that the path you create does not overlap semantically with siblings.
+- Siblings must be mutually exclusive partitions, NOT semantic variations.
+- BAD SIBLINGS: ["Personal Experience"], ["Personal Opinions"], ["Personal Preferences"] (Too overlapping, creates noisy retrieval)
+- GOOD SIBLINGS: ["Subjective Feedback"], ["Objective Information"], ["Behavioral Patterns"]
+- RULE OF THUMB: Instead of making a slightly different synonym node, REUSE the most applicable existing node.
+- Each level should add meaningful specificity. Don't add levels that are just synonyms of the parent.
 - Good chain: ["Food & Recipes"] + ["Beverages", "Coffee Makers"] (3 levels, each adds specificity)
 - Bad chain: ["Food & Recipes"] + ["Food", "Recipes", "Cooking", "Meal Prep"] (redundant levels)
 
@@ -85,6 +92,12 @@ The full topic path is: topics_root + topics_branch. Combined, this should be 2-
 - BAD:  root=["Education"], branch=["Urban Planning"]
 - GOOD: root=["Public Policy"], branch=["Urban Planning"]
 - Rule: Ask yourself "Would this topic exist under this category in a library catalog?" If no, pick the correct domain.
+
+**ROOT ORTHOGONALITY (CRITICAL):** When choosing topics_root, prefer EXISTING root domains from the topic list below. Do NOT create new root domains that overlap with existing ones.
+- If "Arts & Entertainment" exists, do NOT create "Art" or "Music" as separate roots — use branches instead.
+- If "Health" exists, do NOT create "Mental Health" or "Wellness" as separate roots.
+- If "Personal Development" exists, do NOT create "Professional Development" as a separate root.
+- Always reuse the closest existing root and differentiate via topics_branch.
 
 ### 4. FINAL INSTRUCTION
 Your output must be VALID JSON matching the ChatExtraction schema.

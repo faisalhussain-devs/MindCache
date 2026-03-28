@@ -4,7 +4,7 @@ from Memory_extract.input_denoiser import InputDenoiser
 from Database.db_manager import DatabaseManager
 from Database.db_setup import ProcessingJob, TriadBlock, Topic, DecisionMemory, EpisodicMemory, KnowledgeMemory, UserMemory
 from Database.nodes_summary import RecursiveSummarizer
-from Database.embedder import run_embedding_job
+from embedder import run_embedding_job
 
 recursive_summarizer = RecursiveSummarizer()
 mem_ext = Memory_Extractor()

@@ -11,11 +11,11 @@ class RetrievalConfig:
     short_threshold_2: int = 300   # Max chars for (current+n-1) to include n-2
     
     # Root Search (Phase 2)
-    root_selection_threshold: float = 0.35 
+    root_threshold: float = 0.05
     
     # Root Descent (Phase 3)
-    descent_threshold: float = 0.35 
-    top_k: int = 7  # Max candidates to send to refiner
+    descent_threshold: float = 0.05
+    top_k: int = 9  # Max candidates to send to refiner
     
     # Agentic Refiner (Phase 4)
     model_name: str = "qwen3-fast"
