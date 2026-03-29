@@ -2,7 +2,7 @@ import json
 from typing import Optional
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
-from embedder import EmbeddingManager
+from Database.embedder import EmbeddingManager
 from Database.db_setup import (
     engine, Topic, EpisodicMemory,
     UserMemory, KnowledgeMemory, DecisionMemory
@@ -45,7 +45,6 @@ class ActivePathRetrieval:
         
         # Phase 2: Root Search
         root_nodes = self.search.scan(ctx)
-        print("NORRROOOOT")
         if not root_nodes:
             return RetrievalResult(context="No relevant long-term memory found.")
 
