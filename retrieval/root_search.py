@@ -4,7 +4,7 @@ from Database.db_manager import DatabaseManager
 from Database.db_setup import Topic
 from retrieval.context_bridge import ContextBridge
 from retrieval.structs import RetrievalConfig, RetrievalContext
-from safe_ai import SafeAI
+from Memory_extract.safe_ai import SafeAI
 from typing import List
 from pydantic import BaseModel, Field
 
@@ -92,7 +92,7 @@ class RootSearch:
                     session.expunge(root)
                 return llm_roots
 
-            return self._scan_with_vectors(session, ctx, roots, top_k=top_k)
+            
         finally:
             session.close()
 
@@ -157,8 +157,8 @@ class RootSearch:
         selected_roots = []
         for crt in chosen_roots:
             crt = crt.lower()
-            root = root_dict[crt]
-            if crt not in root_dict or root is None:
+            root = root_dict.get(crt)
+            if root is None:
                 continue
 
             selected_roots.append(root)
@@ -206,4 +206,3 @@ class RootSearch:
             session.expunge(root)
 
         return result
-

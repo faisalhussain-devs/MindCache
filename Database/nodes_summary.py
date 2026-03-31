@@ -1,4 +1,3 @@
-from numba.core.ir import Print
 import json
 from datetime import datetime
 from sqlalchemy import func
@@ -183,8 +182,10 @@ class RecursiveSummarizer:
         if not node.description:
             print(f"  [Leaf] Init Description for '{node.name}'")
             desc_prompt = f"""
-            Create a description for the following information.
+            You are generating detailed retrieval descriptions for leaf Topic Nodes inside a memory system.
             Note: Decisions include their current status and reasoning context.
+            Generate description that covers the full scope of what the leaf contains.
+            Preserve concrete retrieval details when present projects, facts, tasks, preferences, dates, places, numbers, outcomes, and decision context.
             Information: {new_text[:5000]}
             Output ONLY the concise description suitable for retrieval.
             """
@@ -198,7 +199,7 @@ class RecursiveSummarizer:
             Note: Decisions include their status (active/superseded/etc.) and context reasoning.
             Current Description: {node.description}   
             New Information: {new_text[:3000]}
-            Output ONLY the updated concise description suitable for retrieval.
+            Output ONLY the updated description suitable for retrieval.
             """
             new_desc = self.extractor.summary_extract(desc_prompt)
             if new_desc: node.description = new_desc
@@ -399,5 +400,6 @@ def main():
     job = RecursiveSummarizer()
     job.run()
 
-main()
+if __name__ == "__main__":
+    main()
 

@@ -16,21 +16,23 @@ Run:
 """
 
 from __future__ import annotations
-
-import os
-import sys
-
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import sessionmaker
-from typing import Optional
-
+from collections import defaultdict
+from functools import lru_cache
 from Database.db_setup import engine, Topic, EpisodicMemory, UserMemory, KnowledgeMemory, DecisionMemory, ProcessingJob
 from Database.db_manager import DatabaseManager
+from dataclasses import dataclass, field
 
-# ── App setup ────────────────────────────────────────────────────────────────
+# App setup
 app = FastAPI(title="MindCache API", version="1.0.0")
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
 
 # Allow requests from Chrome extensions and localhost dev tools
 app.add_middleware(
@@ -41,10 +43,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 db_manager = DatabaseManager()
 Session = sessionmaker(bind=engine)
 
-# ── Lazy-load the retrieval pipeline (heavy — loads embedding model once) ────
+# Lazy-load the retrieval pipeline (heavy — loads embedding model once)
 _retrieval_pipeline = None
 
 def get_pipeline():
@@ -54,36 +58,68 @@ def get_pipeline():
         _retrieval_pipeline = ActivePathRetrieval()
     return _retrieval_pipeline
 
+@dataclass
+class Tree:
+    children_map: dict = field(default_factory=dict)
+    topic_by_id: dict = field(default_factory=dict)
+    parent_map: dict = field(default_factory=dict)
 
-# ── Request / Response models ─────────────────────────────────────────────────
+    def __init__(self, session):
+        self.children_map = defaultdict(list)
+        self.parent_map = defaultdict(list)
+        self.topic_by_id = {None: None}
+        topics = session.query(Topic).all()
+        for t in topics:
+            self.topic_by_id[t.id] = t
+            self.children_map[t.parent_id].append(t)
+        for parent_id, children in self.children_map.items():
+            children.sort(key=lambda topic: ((topic.name or "").lower(), topic.id))
+        self.parent_map = {t.id: self.topic_by_id.get(t.parent_id) for t in topics}
+
+@lru_cache()
+def get_tree_cache():
+    session = Session()
+    try:
+        return Tree(session)
+    finally:
+        session.close()
+
+def _serialize_node(node_id: int, depth: int, max_depth: int) -> dict:
+    tree = get_tree_cache()
+    node = tree.topic_by_id.get(node_id)
+    if node is None:
+        raise HTTPException(404, f"Topic {node_id} not found")
+
+    children = tree.children_map.get(node_id, [])
+
+    result = {
+        "id": node_id,
+        "parent_id": node.parent_id,
+        "name": node.name,
+        "level": node.level,
+        "description": node.description or "",
+        "has_children": bool(children),
+        "children": [],
+    }
+
+    if depth < max_depth:
+        result["children"] = [
+            _serialize_node(child.id, depth + 1, max_depth)
+            for child in children
+        ]
+
+    return result
+
+# Request / Response models
 class IngestRequest(BaseModel):
     prompt: str
     response: str
 
 class RetrieveRequest(BaseModel):
     query: str
-    last_msg: Optional[str] = None
-    prev_msg: Optional[str] = None
+    selected_nodes_by_level: dict[str, list[int]] = Field(default_factory=dict)
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def _serialize_node(node: Topic, depth: int, max_depth: int) -> dict:
-    """Recursively serialize a topic node to a dict for the tree UI."""
-    result = {
-        "id": node.id,
-        "name": node.name,
-        "level": node.level,
-        "description": node.description,
-        "has_children": bool(node.children),
-        "children": [],
-    }
-    if depth < max_depth and node.children:
-        result["children"] = [
-            _serialize_node(child, depth + 1, max_depth)
-            for child in node.children
-        ]
-    return result
-
+# Helpers
 
 def _format_memories(session, topic_id: int) -> list[dict]:
     """Fetch all 4 memory types for a topic and return as a list of dicts."""
@@ -123,18 +159,47 @@ def health():
     return {"status": "ok", "service": "MindCache API"}
 
 
+@app.get("/")
+def graph_ui():
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Graph UI not found")
+    return FileResponse(index_path)
+
+
+@app.get("/graph")
+def graph_ui_alias():
+    graph_path = STATIC_DIR / "graph.html"
+    if not graph_path.exists():
+        raise HTTPException(status_code=404, detail="Graph explorer UI not found")
+    return FileResponse(graph_path)
+
+
+@app.get("/explore")
+def explorer_ui():
+    explorer_path = STATIC_DIR / "explorer.html"
+    if not explorer_path.exists():
+        raise HTTPException(status_code=404, detail="Root explorer UI not found")
+    return FileResponse(explorer_path)
+
+
 @app.get("/tree")
 def get_tree(depth: int = Query(default=3, ge=1, le=10)):
     """Return the topic hierarchy up to `depth` levels deep."""
-    session = Session()
-    try:
-        roots = session.query(Topic).filter(Topic.level == 0).order_by(Topic.name).all()
-        return {
+    tree = get_tree_cache()
+    return {
             "depth": depth,
-            "roots": [_serialize_node(root, depth=0, max_depth=depth) for root in roots],
+            "roots": [_serialize_node(root.id, depth=0, max_depth=depth) for root in tree.children_map.get(None)],
         }
-    finally:
-        session.close()
+
+
+@app.get("/node/{node_id}/tree")
+def get_node_tree(node_id: int, depth: int = Query(default=3, ge=1, le=10)):
+    """Return a node plus its descendants up to `depth` levels deep."""
+    return {
+        "depth": depth,
+        "node": _serialize_node(node_id, depth=0, max_depth=depth),
+    }
 
 
 @app.get("/node/{node_id}/memories")
@@ -169,10 +234,9 @@ def retrieve(req: RetrieveRequest):
         pipeline = get_pipeline()
         result = pipeline.retrieve(
             current_prompt=req.query,
-            last_msg=req.last_msg,
-            prev_msg=req.prev_msg,
+            selected_nodes_by_level=req.selected_nodes_by_level,
         )
-        return {"context": result.context}
+        return {"context": result.context, "trace": result.trace}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

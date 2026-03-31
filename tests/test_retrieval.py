@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from Database.db_setup import Base, engine, Topic, EpisodicMemory, DecisionMemory, MemoryRegistry
-from retrieval.structs import RetrievalContext
+from retrieval.structs import RetrievalContext, CandidateTopic
 
 class TestRetrievalPipeline(unittest.TestCase):
     @classmethod
@@ -74,9 +74,19 @@ class TestRetrievalPipeline(unittest.TestCase):
         
         # Mock retrieval.active_path.ActivePathRetrieval.retrieve flow components
         with patch.object(self.retriever.bridge, 'process', return_value=mock_ctx):
-            with patch.object(self.retriever.search, 'scan', return_value=root):
-                with patch.object(self.retriever.descent, 'descend', return_value=[{"topic": child, "score": 0.9}]):
-                    with patch.object(self.retriever.refiner, 'refine', return_value={"selected_topics": [{"chain": ["Coding", "Python"], "depth": "leaf"}]}):
+            with patch.object(self.retriever.search, 'scan', return_value=[root]):
+                with patch.object(self.retriever.descent, 'descend', return_value=[
+                    CandidateTopic(
+                        name="Python",
+                        path="Coding > Python",
+                        topic_id=child.id,
+                        sim_score=0.9,
+                        bm25_score=0.4,
+                        timestamp="?",
+                        is_leaf=True,
+                    )
+                ]):
+                    with patch.object(self.retriever.refiner, 'refine', return_value={"selected_topics": [{"id": child.id, "chain": ["Coding", "Python"], "depth": "leaf"}]}):
                         
                         # 3. Execute Retrieve
                         result = self.retriever.retrieve("What ML lib usage in Python?")
@@ -113,6 +123,33 @@ class TestRetrievalPipeline(unittest.TestCase):
         self.assertNotIn("Bad Decision", output)
         self.assertIn("Current Decision", output)
         print("\n[Test] Decision Filter Output:\n", output)
+
+    def test_selected_path_uses_deepest_selected_nodes_as_starting_frontier(self):
+        root = Topic(name="Projects", level=0, description="All projects")
+        self.session.add(root)
+        self.session.commit()
+
+        child = Topic(name="Atlas", level=1, parent_id=root.id, description="Atlas project")
+        self.session.add(child)
+        self.session.commit()
+
+        leaf = Topic(name="Deployments", level=2, parent_id=child.id, description="Deployment memories")
+        self.session.add(leaf)
+        self.session.commit()
+
+        resolved = self.retriever._resolve_selected_nodes({
+            0: [root.id],
+            1: [child.id],
+            2: [leaf.id],
+        })
+
+        self.assertEqual(resolved["starting_node_ids"], [leaf.id])
+        self.assertEqual(resolved["selected_nodes_by_level"], {
+            0: [root.id],
+            1: [child.id],
+            2: [leaf.id],
+        })
+        self.assertEqual(resolved["constraint_path_ids"], [root.id, child.id, leaf.id])
 
 if __name__ == '__main__':
     unittest.main()

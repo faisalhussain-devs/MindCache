@@ -4,7 +4,7 @@ from Memory_extract.input_denoiser import InputDenoiser
 from Database.db_manager import DatabaseManager
 from Database.db_setup import ProcessingJob, TriadBlock, Topic, DecisionMemory, EpisodicMemory, KnowledgeMemory, UserMemory
 from Database.nodes_summary import RecursiveSummarizer
-from embedder import run_embedding_job
+from Database.embedder import run_embedding_job
 
 recursive_summarizer = RecursiveSummarizer()
 mem_ext = Memory_Extractor()
@@ -118,7 +118,8 @@ def run_test(inputs):
 
     finally:
         session.close()
-    recursive_summarizer.main()
+    db_manager.run_decision_state_analyzer()
+    recursive_summarizer.run()
     run_embedding_job()
     
 

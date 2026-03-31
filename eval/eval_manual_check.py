@@ -33,7 +33,7 @@ from sqlalchemy import text
 from retrieval.context_bridge import ContextBridge, RetrievalConfig, RetrievalContext
 from retrieval.root_search import RootSearch
 from retrieval.root_descent import RootDescent
-from embedder import EmbeddingManager
+from Database.embedder import EmbeddingManager
 
 _embedder = None
 def get_embedder():

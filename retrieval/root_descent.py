@@ -5,7 +5,7 @@ from Database.db_manager import DatabaseManager
 from retrieval.structs import RetrievalContext, RetrievalConfig, CandidateTopic
 from retrieval.context_bridge import ContextBridge
 import re
-import numpy as np
+from api_server import get_tree_cache
 
 class BM25Scorer:
     """Lightweight BM25 scorer for topic name + description."""
@@ -69,30 +69,51 @@ class RootDescent:
         self.db_manager = DatabaseManager()
         self.Session = self.db_manager.Session
 
-    def descend(self, root_nodes: list[Topic], ctx: RetrievalContext) -> list[CandidateTopic]:
+    def descend(
+        self,
+        start_nodes: list[Topic],
+        ctx: RetrievalContext,
+        include_start_nodes: bool = False,
+        force_full_subtree: bool = False,
+    ) -> list[CandidateTopic]:
         """
         Phase 3: Lean Descent.
-        Returns top-k candidates combined from multiple root nodes.
+        Returns top-k candidates combined from multiple starting nodes.
         No descriptions or summaries sent to refiner.
         """
-        if not root_nodes:
+        if not start_nodes:
             return []
-            
+             
         session = self.Session()
         all_candidates = []
+        seen_ids = set()
         
         try:
-            for root_node in root_nodes:
-                root = session.get(Topic, root_node.id)
-                if not root:
+            for start_node in start_nodes:
+                node = session.get(Topic, start_node.id)
+                if not node:
                     continue
 
-                # Collect ALL matching nodes recursively from this root
+                current_path = self._build_path(node)
+                if include_start_nodes:
+                    self._append_candidate(
+                        node=node,
+                        query_vec=ctx.query_vector,
+                        candidates=all_candidates,
+                        current_path=current_path,
+                        seen_ids=seen_ids,
+                        force_include=True,
+                        selected_boost=True,
+                    )
+
+                # Collect matching nodes recursively from this starting point
                 self._recursive_collect(
-                    node=root, 
+                    node=node,
                     query_vec=ctx.query_vector,
-                    candidates=all_candidates, 
-                    current_path=[root.name]
+                    candidates=all_candidates,
+                    current_path=current_path,
+                    seen_ids=seen_ids,
+                    force_full_subtree=force_full_subtree,
                 )
 
             if not all_candidates:
@@ -130,34 +151,82 @@ class RootDescent:
         finally:
             session.close()
 
-    def _recursive_collect(self, node, query_vec, candidates, current_path):
+    def _build_path(self, node: Topic) -> list[str]:
+        tree = get_tree_cache()
+        path = []
+        current = node
+        while current is not None:
+            path.append(current.name)
+            current = tree.parent_map.get(current.id)
+        return list(reversed(path))
+
+    def _append_candidate(
+        self,
+        node: Topic,
+        query_vec,
+        candidates: list[dict],
+        current_path: list[str],
+        seen_ids: set[int],
+        force_include: bool = False,
+        selected_boost: bool = False,
+    ) -> bool:
+        tree = get_tree_cache()
+        if node.id in seen_ids:
+            return False
+
+        sim_score = 0.0
+        if node.embedding is not None and query_vec is not None:
+            node_vec = self.db_manager._from_blob(node.embedding)
+            sim_score = self.bridge._cosine_similarity(query_vec, node_vec)
+        elif not force_include:
+            return False
+
+        if selected_boost:
+            sim_score = max(sim_score, 1.0)
+
+        if not force_include and sim_score < self.config.descent_threshold:
+            return False
+
+        path_str = " > ".join(current_path)
+        ts = node.timestamp.strftime('%Y-%m-%d %H:%M') if node.timestamp else "?"
+        is_leaf = not bool(tree.children_map.get(node.id))
+
+        candidates.append({
+            'name': node.name,
+            'path': path_str,
+            'topic_id': node.id,
+            'sim_score': float(sim_score),
+            'bm25_score': 0.0,
+            'description': f"{path_str} {node.description or ''}".strip(),
+            'timestamp': ts,
+            'is_leaf': is_leaf
+        })
+        seen_ids.add(node.id)
+        return True
+
+    def _recursive_collect(self, node, query_vec, candidates, current_path, seen_ids, force_full_subtree=False):
         """Recursively collect scored candidates from the topic tree."""
-        children = node.children
+        tree = get_tree_cache()
+        children = tree.children_map.get(node.id)
         if not children:
             return
         for child in children:
-            if child.embedding is None:
-                continue
-            
-            child_vec = self.db_manager._from_blob(child.embedding)
-            sim_score = self.bridge._cosine_similarity(query_vec, child_vec)
-            
-            if sim_score >= self.config.descent_threshold:
-                child_path = current_path + [child.name]
-                path_str = " > ".join(child_path)
-                ts = child.timestamp.strftime('%Y-%m-%d %H:%M') if child.timestamp else "?"
-                is_leaf = not bool(child.children)
-                
-                candidates.append({
-                    'name': child.name,
-                    'path': path_str,
-                    'topic_id': child.id,
-                    'sim_score': float(sim_score),
-                    'bm25_score': 0.0,  # Filled after BM25 fit
-                    'description': path_str + child.description,  # Chain path for BM25 keyword matching
-                    'timestamp': ts,
-                    'is_leaf': is_leaf
-                })
-                
-                # Continue descending
-                self._recursive_collect(child, query_vec, candidates, child_path)
+            child_path = current_path + [child.name]
+            added = self._append_candidate(
+                node=child,
+                query_vec=query_vec,
+                candidates=candidates,
+                current_path=child_path,
+                seen_ids=seen_ids,
+                force_include=force_full_subtree,
+            )
+
+            if force_full_subtree or added:
+                self._recursive_collect(
+                    child,
+                    query_vec,
+                    candidates,
+                    child_path,
+                    seen_ids,
+                    force_full_subtree=force_full_subtree,
+                )

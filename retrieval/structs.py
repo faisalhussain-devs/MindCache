@@ -51,6 +51,7 @@ class CandidateTopic:
 class RetrievalResult:
     """Final output from the retrieval system"""
     context: str = ""
+    trace: dict = field(default_factory=dict)
 
 # --- LLM OUTPUT SCHEMAS ---
 class SelectedTopic(BaseModel):

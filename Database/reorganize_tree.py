@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
 from Database.db_setup import engine, Topic, TopicEmbeddingCache
-from embedder import EmbeddingManager
+from Database.embedder import EmbeddingManager
 from Memory_extract.safe_ai import SafeAI
 from retrieval.root_descent import BM25Scorer
 from pydantic import BaseModel, Field
