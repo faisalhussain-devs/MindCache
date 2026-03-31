@@ -38,32 +38,10 @@ class EmbeddingManager:
             vector = vector.detach().cpu().numpy()
         return vector.astype(np.float32).tobytes()
 
-def _build_enriched_root_text(session, root):
-    """Build embedding text for a root: name + all descendant names (3 levels deep)."""
-    parts = [root.name]
-    if root.description:
-        parts.append(root.description)
-    
-    descendant_names = []
-    def _collect_names(node, depth=0, max_depth=1):
-        if depth >= max_depth:
-            return
-        for child in node.children:
-            descendant_names.append(child.name)
-            _collect_names(child, depth + 1, max_depth)
-    
-    _collect_names(root)
-    if descendant_names:
-        parts.append("Sub-topics: " + ", ".join(descendant_names))
-    
-    return ". ".join(parts)
-
-
 def run_embedding_job():
     Session = sessionmaker(bind=engine)
     session = Session()
     embedder = EmbeddingManager()
-
     try:
         topics = session.query(Topic).filter(
             Topic.description != None, 

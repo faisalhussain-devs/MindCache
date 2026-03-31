@@ -1,12 +1,10 @@
 import time
-from sqlalchemy.orm import sessionmaker
-from Database.db_setup import engine
 from Database.db_manager import DatabaseManager
 from Database.nodes_summary import RecursiveSummarizer
 from Database.reorganize_tree import reorganize_tree
 from Database.embedder import run_embedding_job
 
-COOLDOWN_SECONDS = 3000
+COOLDOWN_SECONDS = 300
 
 def _run_step(name, fn):
     """Wraps a job in try/except so one failure doesn't kill the pipeline."""

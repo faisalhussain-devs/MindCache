@@ -95,6 +95,89 @@ def _would_create_cycle(node_map, child_id, proposed_parent_id):
         curr_id = curr_node.parent_id if curr_node else None
     return False
 
+def _merge_summary_blob(target_summary, source_summary):
+    """Merge summary blobs without breaking structured JSON summaries."""
+    if not source_summary:
+        return target_summary, False
+    if not target_summary:
+        return source_summary, True
+
+    target_text = str(target_summary).strip()
+    source_text = str(source_summary).strip()
+
+    try:
+        if target_text.startswith("{") and source_text.startswith("{"):
+            target_obj = json.loads(target_text)
+            source_obj = json.loads(source_text)
+            if isinstance(target_obj, dict) and isinstance(source_obj, dict):
+                merged_obj = json.loads(target_text)
+
+                def merge_dict(dst, src):
+                    changed = False
+                    for key, value in src.items():
+                        if key not in dst:
+                            dst[key] = value
+                            changed = True
+                            continue
+                        existing = dst[key]
+                        if isinstance(existing, dict) and isinstance(value, dict):
+                            if merge_dict(existing, value):
+                                changed = True
+                        elif isinstance(existing, list) and isinstance(value, list):
+                            for item in value:
+                                if item not in existing:
+                                    existing.append(item)
+                                    changed = True
+                        elif existing in (None, "", [], {}):
+                            dst[key] = value
+                            changed = True
+                    return changed
+
+                changed = merge_dict(merged_obj, source_obj)
+                if changed:
+                    return json.dumps(merged_obj), True
+    except Exception:
+        pass
+
+    if target_text != source_text and not target_text.startswith("{") and not source_text.startswith("{"):
+        return f"{target_text}\n\n[Merged source]\n{source_text}", True
+
+    return target_summary, False
+
+
+def transfer_topic_metadata(source_node, target_node):
+    """Transfer non-memory metadata from a deleted source node to its survivor."""
+    summary_changed = False
+    description_changed = False
+
+    merged_summary, changed = _merge_summary_blob(target_node.summary, source_node.summary)
+    if changed:
+        target_node.summary = merged_summary
+        summary_changed = True
+
+    source_description = (source_node.description or "").strip()
+    target_description = (target_node.description or "").strip()
+    if source_description and not target_description:
+        target_node.description = source_node.description
+        description_changed = True
+    elif source_description and target_description and source_description != target_description:
+        if source_description not in target_description:
+            target_node.description = f"{target_node.description}\n\n[Merged from node {source_node.id}]\n{source_node.description}"
+            description_changed = True
+
+    if source_node.timestamp and (target_node.timestamp is None or source_node.timestamp < target_node.timestamp):
+        target_node.timestamp = source_node.timestamp
+
+    if source_node.is_groomed and not target_node.is_groomed:
+        target_node.is_groomed = source_node.is_groomed
+
+    if summary_changed or description_changed:
+        target_node.embedding = None
+    elif target_node.embedding is None and source_node.embedding is not None:
+        target_node.embedding = source_node.embedding
+
+    return summary_changed or description_changed
+
 def _load_last_root_count():
     try:
         with open(ROOT_ORTHO_STATE_FILE, "r", encoding="utf-8") as f:
@@ -220,6 +303,8 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, children_map
         for mem in list(db_node.knowledge_memories): mem.topic = target_node
         for mem in list(db_node.decision_memories): mem.topic = target_node
 
+        transfer_topic_metadata(db_node, target_node)
+
         children_list = list(db_node.children)
         print(f"  MERGE: '{db_node.name}' (ID {db_node.id}, parent={db_node.parent_id}) INTO '{target_node.name}' (ID {target_node.id}, parent={target_node.parent_id})")
         print(f"    Children to move: {[(c.name, c.id) for c in children_list]}")
@@ -240,6 +325,7 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, children_map
         
         # Delete old cache entry
         session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == db_node.id).delete()
+        session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == target_node.id).delete()
         # Clean up ALL in-memory maps before deleting
         if children_map and db_node.parent_id in children_map:
             children_map[db_node.parent_id] = [c for c in children_map[db_node.parent_id] if c.id != node_id]
@@ -347,8 +433,10 @@ def apply_mapping(session, ai, prompt, system_prompt, target_nodes, children_map
                 for mem in list(dup.user_memories): mem.topic = survivor
                 for mem in list(dup.knowledge_memories): mem.topic = survivor
                 for mem in list(dup.decision_memories): mem.topic = survivor
+                transfer_topic_metadata(dup, survivor)
                 # Clean up cache, ALL maps, and delete
                 session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == dup.id).delete()
+                session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == survivor.id).delete()
                 if children_map and pid in children_map:
                     children_map[pid] = [c for c in children_map[pid] if c.id != dup.id]
                 if node_map and dup.id in node_map:
@@ -1205,8 +1293,10 @@ def cleanup_roots(session):
             for mem in list(dup.user_memories): mem.topic = survivor
             for mem in list(dup.knowledge_memories): mem.topic = survivor
             for mem in list(dup.decision_memories): mem.topic = survivor
+            transfer_topic_metadata(dup, survivor)
             # Delete cache and node
             session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == dup.id).delete()
+            session.query(TopicEmbeddingCache).filter(TopicEmbeddingCache.topic_leaf_id == survivor.id).delete()
             session.delete(dup)
             merge_count += 1
     

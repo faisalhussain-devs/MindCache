@@ -107,7 +107,7 @@ class RecursiveSummarizer:
             
             # Format decisions separately
             if decisions_dict:
-                lines.append("\n== DECISIONS ==")
+                lines.append("\n DECISIONS")
                 if latest_first:
                     dec_keys = sorted(list(decisions_dict.keys()), reverse=True)
                 else:
@@ -131,6 +131,7 @@ class RecursiveSummarizer:
                 parsed = json.loads(node.summary)
                 if "memories" in parsed or "decisions" in parsed:
                     existing_summary = parsed
+                    min_timestamp = parsed["memories"]
                 else:
                     raise ValueError("Error: Invalid summary format")
         except Exception as e:
