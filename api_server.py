@@ -28,6 +28,8 @@ from functools import lru_cache
 from Database.db_setup import engine, Topic, EpisodicMemory, UserMemory, KnowledgeMemory, DecisionMemory, ProcessingJob
 from Database.db_manager import DatabaseManager
 from dataclasses import dataclass, field
+import time
+
 
 # App setup
 app = FastAPI(title="MindCache API", version="1.0.0")
@@ -153,7 +155,6 @@ def _format_memories(session, topic_id: int) -> list[dict]:
     return memories
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "MindCache API"}
@@ -231,11 +232,14 @@ def retrieve(req: RetrieveRequest):
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     try:
+        start = time.time()
         pipeline = get_pipeline()
         result = pipeline.retrieve(
             current_prompt=req.query,
             selected_nodes_by_level=req.selected_nodes_by_level,
         )
+        end = time.time()
+        print("Execution time:", end - start, "seconds")
         return {"context": result.context, "trace": result.trace}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

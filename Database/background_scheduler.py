@@ -3,39 +3,35 @@ from sqlalchemy.orm import sessionmaker
 from Database.db_setup import engine
 from Database.db_manager import DatabaseManager
 from Database.nodes_summary import RecursiveSummarizer
-from Database.reorganize_tree import reorganize_tree, repair_cycles
+from Database.reorganize_tree import reorganize_tree
 from Database.embedder import run_embedding_job
 
-COOLDOWN_SECONDS = 100
+COOLDOWN_SECONDS = 3000
 
 def _run_step(name, fn):
     """Wraps a job in try/except so one failure doesn't kill the pipeline."""
-    print(f"\n{'='*50}")
     print(f" RUNNING: {name}")
-    print(f"{'='*50}")
     try:
         fn()
     except Exception as e:
         print(f"  [ERROR] {name} failed: {e}")
 
-def run_all_jobs(cooldown=COOLDOWN_SECONDS, dry_run=True):
+def run_all_jobs(cooldown=COOLDOWN_SECONDS):
     """
     Runs all compute-heavy background jobs sequentially with cooldown gaps.
     
     Pipeline order:
-      1. Decision Analyzer  (lightweight — enriches decision context)
-      2. Node Summaries     (LLM-heavy — generates descriptions)
-      3. Tree Reorganization (LLM + embedder — restructures topology)
-      4. Cycle Repair        (lightweight — safety sweep post-reorganization)
-      5. Embedding Job       (GPU-heavy — generates topic vectors)
+      1. Tree Reorganization (LLM — restructures topology)
+      2. Decision Analyzer  (lightweight — enriches decision context)
+      3. Node Summaries and Description     (LLM-heavy — generates descriptions)
+      4. Embedding Job       (GPU-heavy — generates description vectors)
     """
     db = DatabaseManager()
     
     jobs = [
+        ("Tree Reorganization", lambda: reorganize_tree()), 
         ("Decision Analyzer", lambda: db.run_decision_state_analyzer()),
         ("Node Summaries", lambda: RecursiveSummarizer().run()),
-        ("Tree Reorganization", lambda: reorganize_tree(dry_run=dry_run)),
-        ("Cycle Repair", lambda: _run_cycle_repair()),
         ("Embedding Cache", lambda: run_embedding_job()),
     ]
     
@@ -45,21 +41,8 @@ def run_all_jobs(cooldown=COOLDOWN_SECONDS, dry_run=True):
             print(f"\n  Cooling down for {cooldown}s...")
             time.sleep(cooldown)
     
-    print(f"\n{'='*50}")
     print(" ALL BACKGROUND JOBS COMPLETE")
-    print(f"{'='*50}")
 
-def _run_cycle_repair():
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    try:
-        repair_cycles(session)
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        raise e
-    finally:
-        session.close()
 
 if __name__ == "__main__":
     import sys

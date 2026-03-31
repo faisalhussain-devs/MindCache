@@ -2,10 +2,10 @@ from Memory_extract.safe_ai import SafeAI
 
 class Summary_Extractor():
     def __init__(self, sys_prompt=None):
-        self.llm = SafeAI()
         self.sys_prompt = sys_prompt
 
     def summary_extract(self, prompt):
+        self.llm = SafeAI()
         raw_json = self.llm.generate(
             prompt=prompt,
             system_prompt=self.sys_prompt

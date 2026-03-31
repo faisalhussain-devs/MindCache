@@ -47,7 +47,6 @@ class ActivePathRetrieval:
         5. DB Fetch → actual data (summary or leaf memories)
         """
         selected_nodes_by_level = self._normalize_selected_nodes_by_level(selected_nodes_by_level)
-
         # Phase 1: Context Bridge
         ctx = self.bridge.process(current_prompt)
         trace = {
