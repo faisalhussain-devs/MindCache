@@ -10,8 +10,8 @@ MIN_BATTERY_PCT = 25            # Minimum battery to run on unplugged
 
 # ECO MODE SETTINGS
 BATCH_SIZE = 4                  # Generate 4 tokens before checking CPU
-BASE_SLEEP = 0.05               # Standard cooling break (50ms)
-ECO_SLEEP = 0.15                # Aggressive cooling break (150ms) if CPU is hot
+BASE_SLEEP = 0.15               # Standard cooling break (50ms)
+ECO_SLEEP = 3                # Aggressive cooling break (150ms) if CPU is hot
 
 class SafeAI:
     def __init__(self, model_name=DEFAULT_MODEL):
@@ -71,11 +71,14 @@ class SafeAI:
             print(f"[SafeAI] Cooling down... Waiting for: {', '.join(issues)}")
             time.sleep(5)
 
-    def generate(self, prompt, system_prompt=None, json_schema: dict | None = None):
+    def generate(self, prompt, system_prompt=None, json_schema: dict | None = None, retrieval=None):
         """
         Generates text using 'Dynamic Duty Cycling'.
         It pulses the CPU (Work -> Sleep -> Work) to prevent overheating.
         """
+        if retrieval:
+            ECO_SLEEP = 0.15
+            BASE_SLEEP = 0.05
         # 1. Health Check before starting
         self._wait_for_safe_conditions()
 

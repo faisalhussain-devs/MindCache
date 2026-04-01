@@ -1,7 +1,7 @@
 import numpy as np
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import func
+from sqlalchemy import func, text
 from Database.db_setup import engine, init_db, ProcessingJob, Topic, TriadBlock, UserMemory, EpisodicMemory, KnowledgeMemory, DecisionMemory, MemoryRegistry
 from Database.decision_analyzer import DecisionStateAnalyzer
 
@@ -83,36 +83,6 @@ class DatabaseManager:
             cls._embedder = EmbeddingManager()
         return cls._embedder
 
-    def _semantic_match(self, name, siblings):
-        """
-        Find the best semantic match for `name` among existing `siblings`.
-        Returns the matching Topic if similarity > threshold, else None.
-        """
-        SIMILARITY_THRESHOLD = 0.99
-        if not siblings:
-            return None
-
-        embedder = self._get_embedder()
-        sibling_names = [s.name for s in siblings]
-        
-        # Embed new name + all sibling names in one batch
-        all_texts = [name] + sibling_names
-        vectors = embedder.get_batch_embeddings(all_texts)
-        
-        new_vec = vectors[0]
-        sibling_vecs = vectors[1:]
-        
-        # Cosine similarity (vectors are already normalized)
-        similarities = np.dot(sibling_vecs, new_vec)
-        best_idx = np.argmax(similarities)
-        best_score = similarities[best_idx]
-
-        if best_score >= SIMILARITY_THRESHOLD:
-            matched = siblings[best_idx]
-            print(f"[TopicNorm] Merged '{name}' → '{matched.name}' (sim: {best_score:.2f})")
-            return matched
-        return None
-
     def _get_or_create_topic_path(self, session, chain, job_timestamp=None):
         """
         Takes a list like ['MindCache', 'Backend', 'Database']
@@ -139,16 +109,7 @@ class DatabaseManager:
             
             current_node = query.first()
 
-            # Step 2: Semantic fallback — check siblings for near-synonyms
-            if not current_node:
-                if parent_node:
-                    siblings = session.query(Topic).filter(Topic.parent_id == parent_node.id).all()
-                else:
-                    siblings = session.query(Topic).filter(Topic.parent_id.is_(None)).all()
-                
-                current_node = self._semantic_match(name, siblings)
-
-            # Step 3: Create new node if no match found
+            # Step 2: Create new node if no match found
             if not current_node:
                 current_node = Topic(
                     name=name,
@@ -161,10 +122,7 @@ class DatabaseManager:
             
             parent_node = current_node
             
-        # Step 4: Enforce Leaf Node Constraint
-        # Memories should only be attached to leaf nodes (nodes without children).
-        # If the resolved path ends on a node that already has children,
-        # we create a child leaf node (e.g., "General [Topic Name]") to hold the new memories.
+        # Step 3: Enforce Leaf Node Constraint
         if current_node.children:
             # Check if a generic leaf already exists
             generic_name = f"General {current_node.name}"
@@ -186,7 +144,7 @@ class DatabaseManager:
             
         return current_node
 
-    def get_topic_tree_hints(self, max_depth=3):
+    def get_topic_tree_hints(self, max_depth=2):
         """
         Returns a formatted string of existing topic paths for prompt grounding.
         Lightweight: just queries root + first three levels.
@@ -341,3 +299,27 @@ class DatabaseManager:
         finally:
             session.close()
 
+    def process_memory(self):
+        from Memory_extract.input_denoiser import InputDenoiser
+        from Memory_extract.memory_extractor import Memory_Extractor
+        inp_denoiser = InputDenoiser()
+        mem_ext = Memory_Extractor()
+        
+        while True:
+            job = self.get_pending_job()
+            if not job:
+                print("No more jobs in queue. Worker going to sleep.")
+                break
+
+            job_id, prompt, response, next_prompt = job["id"], job["raw_prompt"], job["raw_response"], job["raw_next_prompt"]
+            full_text = f"<user> {prompt} <llm> {response} <user> {next_prompt}"
+            compressed_input = inp_denoiser.compress(full_text)
+            print(f"\n[Worker] Processing Job #{job_id}...")
+        
+            extracted_data = mem_ext.memory_extract(compressed_input)     
+
+            self.save_extracted_memory(
+                job_id,
+                compressed_input, 
+                extracted_data
+            )

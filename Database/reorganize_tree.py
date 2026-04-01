@@ -783,7 +783,7 @@ def two_step_bootstrap(session, full_tree_text, children_map=None, node_map=None
         apply_mapping(
             session,
             ai,
-            prompt.template(tree_text="\n\n".join(group[1])),
+            prompt.format(tree_text="\n".join(group[1])),
             system_prompt,
             group[2],
             children_map=children_map,

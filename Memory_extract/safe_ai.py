@@ -38,6 +38,7 @@ class SafeAI:
         max_tokens: int = 128000,
         json_schema: dict | None = None,
         retries: int = 5,
+        retrieval = None
     ):
         for attempt in range(retries):
             

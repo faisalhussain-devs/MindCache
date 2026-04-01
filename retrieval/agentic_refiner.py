@@ -89,7 +89,8 @@ class AgenticRefiner:
         raw_response = self.ai.generate(
             usr_prompt,
             system_prompt=SYSTEM_PROMPT,
-            json_schema=schema
+            json_schema=schema,
+            retrieval=True
         )
         if not raw_response:
             return {"reasoning": "Generation failed", "selected_topics": []}

@@ -131,14 +131,14 @@ class RecursiveSummarizer:
                 parsed = json.loads(node.summary)
                 if "memories" in parsed or "decisions" in parsed:
                     existing_summary = parsed
-                    min_timestamp = parsed["memories"]
+                    min_timestamp = max(parsed["memories"].keys(), parsed["decisions"].keys())
                 else:
                     raise ValueError("Error: Invalid summary format")
         except Exception as e:
             print(f"Error: {e}")
             existing_summary = {"memories": {}, "decisions": {}}
 
-        new_data = self.get_leaf_summary(session, node.id, min_timestamp=0)
+        new_data = self.get_leaf_summary(session, node.id, min_timestamp=min_timestamp)
 
         if not new_data:
             return
@@ -187,8 +187,7 @@ class RecursiveSummarizer:
             Note: Decisions include their current status and reasoning context.
             Generate description that covers the full scope of what the leaf contains.
             Preserve concrete retrieval details when present projects, facts, tasks, preferences, dates, places, numbers, outcomes, and decision context.
-            Information: {new_text[:5000]}
-            Output ONLY the concise description suitable for retrieval.
+            Information: {new_text}
             """
             new_desc = self.extractor.summary_extract(desc_prompt)
             if new_desc: node.description = new_desc
@@ -199,8 +198,7 @@ class RecursiveSummarizer:
             Update the following description with new information.
             Note: Decisions include their status (active/superseded/etc.) and context reasoning.
             Current Description: {node.description}   
-            New Information: {new_text[:3000]}
-            Output ONLY the updated description suitable for retrieval.
+            New Information: {new_text}
             """
             new_desc = self.extractor.summary_extract(desc_prompt)
             if new_desc: node.description = new_desc
@@ -210,7 +208,7 @@ class RecursiveSummarizer:
 
     def process_parent(self, session, node):
         """
-        Parent Node (Source-Map Architecture):
+        Parent Node (Source-Map Architecture): 
         - Summary: JSON Blob { "source_map": { "id": "Contextual Summary" }, "ignored_ids": [id...] }
         """
         children = node.children
@@ -221,6 +219,7 @@ class RecursiveSummarizer:
             node.summary = child.summary
             node.description = child.description
             node.timestamp = child.timestamp
+            node.embedding = child.embedding
             session.add(node)
             return
 
@@ -241,8 +240,9 @@ class RecursiveSummarizer:
 
         for child in sorted_children:
             child_ts = child.timestamp or datetime.min
-            if child_ts > node_ts:
-                status = "EXISTING_SOURCE" if str(child.id) in source_map else ("IGNORED" if child.id in ignored_ids else "NEW")
+            is_new = str(child.id) not in source_map and child.id not in ignored_ids
+            if is_new or child_ts > node_ts:
+                status = "NEW" if is_new else ("EXISTING_SOURCE" if str(child.id) in source_map else "IGNORED")
                 child_content = ""
                 if not child.children:
                     try:
@@ -273,7 +273,7 @@ class RecursiveSummarizer:
             Mark irrelevant/noise nodes as ignored and Generate a concise, keyword-rich description too.
 
             Child Nodes:
-            {child_text[:15000]}
+            {child_text}
             
             Instructions:
             1. 'source_map': Dictionary mapping Child ID to a 1-sentence contextual summary of why it matters.
@@ -305,7 +305,7 @@ class RecursiveSummarizer:
             {node.description}
             
             Incoming Updates:
-            {child_text[:5000]}
+            {child_text}
             
             Instructions:
             1. 'modify': Dictionary of ID -> New Summary.

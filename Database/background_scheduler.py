@@ -4,7 +4,7 @@ from Database.nodes_summary import RecursiveSummarizer
 from Database.reorganize_tree import reorganize_tree
 from Database.embedder import run_embedding_job
 
-COOLDOWN_SECONDS = 300
+COOLDOWN_SECONDS = 600
 
 def _run_step(name, fn):
     """Wraps a job in try/except so one failure doesn't kill the pipeline."""
@@ -27,6 +27,7 @@ def run_all_jobs(cooldown=COOLDOWN_SECONDS):
     db = DatabaseManager()
     
     jobs = [
+        ("Memory Extractor", lambda: db.process_memory()),
         ("Tree Reorganization", lambda: reorganize_tree()), 
         ("Decision Analyzer", lambda: db.run_decision_state_analyzer()),
         ("Node Summaries", lambda: RecursiveSummarizer().run()),

@@ -140,7 +140,7 @@ class RootSearch:
         raw_response = self.ai.generate(
             user_prompt,
             system_prompt=SYSTEM_PROMPT.format(max_selected=max_selected),
-            json_schema=Roots.model_json_schema(),
+            json_schema=Roots.model_json_schema(), retrieval=True
         )
         if not raw_response:
             return []
