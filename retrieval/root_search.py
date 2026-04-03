@@ -67,6 +67,7 @@ class RootSearch:
         self.bridge = context_bridge
         self.db_manager = DatabaseManager()
         self.Session = self.db_manager.Session
+        self.ai = SafeAI()
 
     def scan(self, ctx: RetrievalContext, top_k=6) -> list[Topic]:
         """
@@ -84,7 +85,7 @@ class RootSearch:
             )
             if not roots:
                 return []
-            self.ai = SafeAI()
+
             llm_roots = self._scan_with_llm(ctx, roots, top_k=min(top_k, MAX_SELECTED_ROOTS))
             if llm_roots:
                 for root in llm_roots:

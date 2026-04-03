@@ -1,9 +1,8 @@
 from retrieval.structs import RetrievalConfig, RefinedSelection, CandidateTopic
 from Memory_extract.safe_ai import SafeAI
 
-SYSTEM_PROMPT = """You are the **Retrieval Refinement Engine** for MindCache, a personal memory database.
-
-You receive a user query and a ranked list of candidate topics found by the retrieval pipeline (vector similarity + BM25 keyword scoring). Your job is to select the most relevant topics and decide what depth of data to retrieve.
+SYSTEM_PROMPT = """You are the **Retrieval Refinement Engine**.
+You receive a user query and a ranked list of candidate topics found by the retrieval pipeline . Your job is to select the most relevant topics and decide what depth of data to retrieve.
 
 ### TASK
 1. **Analyze** the user query intent — what information are they looking for?

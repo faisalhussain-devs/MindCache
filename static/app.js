@@ -1005,10 +1005,11 @@ function renderExplorerGrid() {
     return;
   }
 
-  for (const node of visibleNodes) {
+  for (const [index, node] of visibleNodes.entries()) {
     const card = document.createElement("article");
     const isSelected = explorerState.selectedNodeIds.has(node.id);
     card.className = `panel-card explorer-node-card${isSelected ? " is-selected" : ""}`;
+    card.style.animationDelay = `${index * 40}ms`;
 
     const childCount = (node.children || []).filter((childId) => state.nodes.has(childId)).length;
 
@@ -1131,6 +1132,7 @@ async function runRetrieval() {
       updateContextOutputState();
     }
     setStatus("Retrieval finished.");
+    showToast("Retrieval complete", "success");
     focusRootId = trace.root_ids?.[0] ?? getRootId(trace.selected_topic_ids?.[0]);
   } catch (error) {
     console.error(error);
@@ -1139,6 +1141,7 @@ async function runRetrieval() {
       updateContextOutputState();
     }
     setStatus(`Retrieval failed: ${error.message}`);
+    showToast("Retrieval failed", "error");
   } finally {
     setBusy(false);
     render();
@@ -2216,6 +2219,14 @@ function installControls() {
     renderFocusNodeBanner();
     renderStickyNodes();
   });
+
+  // Ctrl+Enter to run retrieval
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      runRetrieval();
+    }
+  });
 }
 
 async function initialize() {
@@ -2235,6 +2246,16 @@ async function initialize() {
     setBusy(false);
     setStatus(`Failed to load tree: ${error.message}`);
   }
+}
+
+/* ────────── Toast notifications ────────── */
+
+function showToast(message, type = "info") {
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
 }
 
 initialize();

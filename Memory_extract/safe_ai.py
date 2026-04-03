@@ -20,7 +20,6 @@ class SafeAI:
                 raise EnvironmentError("GEMINI_API_KEYS or GEMINI_API_KEY not set.")
             self.keys = [single_key.strip()]
         
-        print(self.keys)    
         self.current_key_idx = 0
         self.model_name = model_name
         self._init_client()

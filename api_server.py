@@ -16,6 +16,7 @@ Run:
 """
 
 from __future__ import annotations
+import numpy as np
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,6 +51,110 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 db_manager = DatabaseManager()
 Session = sessionmaker(bind=engine)
 
+# ── Pipeline control ───────────────────────────────────────────────────────────
+import threading
+import time as _time
+
+_scheduler_running = False
+_scheduler_mode = None
+
+def _lazy_run_step(name, fn):
+    """Inline version of _run_step to avoid importing background_scheduler at module level."""
+    print(f" RUNNING: {name}")
+    try:
+        fn()
+    except Exception as e:
+        print(f"  [ERROR] {name} failed: {e}")
+
+@app.post("/run-scheduler")
+def trigger_full_scheduler(cooldown: int = 30):
+    """Manual trigger: runs ALL 5 steps (Extract → Reorg → Decision → Summary → Embed)."""
+    global _scheduler_running, _scheduler_mode
+    if _scheduler_running:
+        return {"status": "already_running", "mode": _scheduler_mode}
+
+    def run():
+        global _scheduler_running, _scheduler_mode
+        _scheduler_running = True
+        _scheduler_mode = "full"
+        try:
+            from Database.background_scheduler import run_all_jobs
+            run_all_jobs(cooldown=cooldown)
+        finally:
+            _scheduler_running = False
+            _scheduler_mode = None
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "started", "mode": "full"}
+
+@app.post("/run-tier1")
+def trigger_tier1():
+    """Auto-mode tier 1: Extract memories + Decision Analyzer only."""
+    global _scheduler_running, _scheduler_mode
+    if _scheduler_running:
+        return {"status": "already_running", "mode": _scheduler_mode}
+
+    def run():
+        global _scheduler_running, _scheduler_mode
+        _scheduler_running = True
+        _scheduler_mode = "tier1"
+        try:
+            _lazy_run_step("Memory Extractor", lambda: db_manager.process_memory())
+            _time.sleep(10)
+            _lazy_run_step("Decision Analyzer", lambda: db_manager.run_decision_state_analyzer())
+        finally:
+            _scheduler_running = False
+            _scheduler_mode = None
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "started", "mode": "tier1"}
+
+@app.post("/run-tier2")
+def trigger_tier2():
+    """Auto-mode tier 2: Full pipeline (reorg + summaries + embeddings)."""
+    global _scheduler_running, _scheduler_mode
+    if _scheduler_running:
+        return {"status": "already_running", "mode": _scheduler_mode}
+
+    def run():
+        global _scheduler_running, _scheduler_mode
+        _scheduler_running = True
+        _scheduler_mode = "tier2"
+        try:
+            from Database.background_scheduler import run_all_jobs
+            run_all_jobs(cooldown=30)
+        finally:
+            _scheduler_running = False
+            _scheduler_mode = None
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "started", "mode": "tier2"}
+
+@app.get("/scheduler-status")
+def scheduler_status():
+    """Check if the background scheduler is currently running."""
+    return {"running": _scheduler_running, "mode": _scheduler_mode}
+
+@app.get("/queue/status")
+def queue_status():
+    """Return counts of pending/failed/processing jobs in the extraction queue."""
+    from Database.db_setup import ProcessingJob
+    session = Session()
+    try:
+        pending = session.query(ProcessingJob).filter(ProcessingJob.status == 'pending').count()
+        failed = session.query(ProcessingJob).filter(ProcessingJob.status == 'failed').count()
+        processing = session.query(ProcessingJob).filter(ProcessingJob.status == 'processing').count()
+        return {
+            "queue": {
+                "pending": pending,
+                "failed": failed,
+                "processing": processing,
+                "total": pending + failed + processing
+            }
+        }
+    finally:
+        session.close()
+
 # Lazy-load the retrieval pipeline (heavy — loads embedding model once)
 _retrieval_pipeline = None
 
@@ -70,12 +175,13 @@ class Tree:
         self.children_map = defaultdict(list)
         self.parent_map = defaultdict(list)
         self.topic_by_id = {None: None}
+        self.embedding_cache = {}
         topics = session.query(Topic).all()
         for t in topics:
             self.topic_by_id[t.id] = t
             self.children_map[t.parent_id].append(t)
-        for parent_id, children in self.children_map.items():
-            children.sort(key=lambda topic: ((topic.name or "").lower(), topic.id))
+            if t.embedding:
+                self.embedding_cache[t.id] = np.frombuffer(t.embedding, dtype=np.float32).copy()
         self.parent_map = {t.id: self.topic_by_id.get(t.parent_id) for t in topics}
 
 @lru_cache()
@@ -116,10 +222,13 @@ def _serialize_node(node_id: int, depth: int, max_depth: int) -> dict:
 class IngestRequest(BaseModel):
     prompt: str
     response: str
+    next_prompt: str | None
 
 class RetrieveRequest(BaseModel):
     query: str
-    selected_nodes_by_level: dict[str, list[int]] = Field(default_factory=dict)
+    last_msg: str | None = None
+    prev_msg: str | None = None
+    selected_nodes_by_level: dict[str | int, list[int]] = Field(default_factory=dict)
 
 # Helpers
 
@@ -236,12 +345,16 @@ def retrieve(req: RetrieveRequest):
         pipeline = get_pipeline()
         result = pipeline.retrieve(
             current_prompt=req.query,
+            last_msg=req.last_msg,
+            prev_msg=req.prev_msg,
             selected_nodes_by_level=req.selected_nodes_by_level,
         )
         end = time.time()
         print("Execution time:", end - start, "seconds")
         return {"context": result.context, "trace": result.trace}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -257,7 +370,7 @@ def ingest(req: IngestRequest):
         db_manager.add_to_queue(
             prompt=req.prompt,
             response=req.response,
-            next_prompt=None,
+            next_prompt=req.next_prompt,
         )
         return {"status": "queued"}
     except Exception as e:

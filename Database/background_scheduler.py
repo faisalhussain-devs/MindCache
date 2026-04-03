@@ -55,4 +55,4 @@ if __name__ == "__main__":
     if is_dry_run:
         print("NOTE: Tree reorganization in DRY-RUN mode. Pass '--apply' to alter DB.")
     print(f"Cooldown between jobs: {cooldown}s\n")
-    run_all_jobs(cooldown=cooldown, dry_run=is_dry_run)
+    run_all_jobs(cooldown=cooldown)

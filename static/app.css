@@ -1,3 +1,5 @@
+
+
 :root {
   --panel: rgba(255, 255, 255, 0.84);
   --panel-border: rgba(47, 62, 78, 0.14);
@@ -34,6 +36,38 @@ body {
 
 body.graph-only-page {
   overflow: hidden;
+}
+
+/* ───── Branding ───── */
+.brand-block {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brand-eyebrow {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.brand-title {
+  font-size: 1.08rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.brand-block-sm .brand-title {
+  font-size: 0.92rem;
+}
+
+.brand-block-sm .brand-eyebrow {
+  font-size: 0.54rem;
 }
 
 body::before {
@@ -282,6 +316,7 @@ body::before {
   border-color: rgba(23, 107, 135, 0.12);
   box-shadow: 0 12px 28px rgba(34, 52, 62, 0.12);
   transition: transform 180ms var(--ease-premium), box-shadow 180ms var(--ease-premium), border-color 180ms var(--ease-premium);
+  animation: card-enter 300ms var(--ease-premium) both;
 }
 
 .explorer-node-card:hover {
@@ -408,7 +443,7 @@ body::before {
   border: 1px solid var(--panel-border);
   border-radius: 18px;
   box-shadow: 0 12px 28px rgba(56, 52, 45, 0.11);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(24px) saturate(1.2);
   padding: 12px;
 }
 
@@ -1484,5 +1519,57 @@ button:active {
 
   .graph-viewport {
     height: 100%;
+  }
+}
+
+/* ───── Animations ───── */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* ───── Toast notifications ───── */
+.toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10000;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: white;
+  pointer-events: none;
+  animation: toast-in 300ms var(--ease-premium) both, toast-out 300ms ease 2.5s both;
+}
+
+.toast-success {
+  background: linear-gradient(135deg, #1c9c63, #158a56);
+  box-shadow: 0 8px 20px rgba(28, 156, 99, 0.3);
+}
+
+.toast-error {
+  background: linear-gradient(135deg, #d9505a, #c44048);
+  box-shadow: 0 8px 20px rgba(217, 80, 90, 0.3);
+}
+
+.toast-info {
+  background: linear-gradient(135deg, #0f6f8f, #0b5972);
+  box-shadow: 0 8px 20px rgba(15, 111, 143, 0.3);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.95);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
   }
 }

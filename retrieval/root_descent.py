@@ -1,7 +1,7 @@
 import math
 from collections import Counter
-from Database.db_setup import Topic
-from Database.db_manager import DatabaseManager
+from Database.db_setup import Topic, engine
+from sqlalchemy.orm import sessionmaker
 from retrieval.structs import RetrievalContext, RetrievalConfig, CandidateTopic
 from retrieval.context_bridge import ContextBridge
 import re
@@ -66,8 +66,7 @@ class RootDescent:
     def __init__(self, config: RetrievalConfig, context_bridge: ContextBridge):
         self.config = config
         self.bridge = context_bridge
-        self.db_manager = DatabaseManager()
-        self.Session = self.db_manager.Session
+        self.Session = sessionmaker(bind=engine)
 
     def descend(
         self,
@@ -175,11 +174,12 @@ class RootDescent:
             return False
 
         sim_score = 0.0
-        if node.embedding is not None and query_vec is not None:
-            node_vec = self.db_manager._from_blob(node.embedding)
-            sim_score = self.bridge._cosine_similarity(query_vec, node_vec)
-        elif not force_include:
-            return False
+        if query_vec is not None:
+            node_vec = tree.embedding_cache.get(node.id)
+            if node_vec is not None:
+                sim_score = self.bridge._cosine_similarity(query_vec, node_vec)
+            elif not force_include:
+                return False
 
         if selected_boost:
             sim_score = max(sim_score, 1.0)

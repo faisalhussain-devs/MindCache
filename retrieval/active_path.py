@@ -36,6 +36,8 @@ class ActivePathRetrieval:
     def retrieve(
         self,
         current_prompt: str,
+        last_msg: str | None = None,
+        prev_msg: str | None = None,
         selected_nodes_by_level: dict[str, list[int]] | None = None,
     ) -> RetrievalResult:
         """
@@ -48,7 +50,7 @@ class ActivePathRetrieval:
         """
         selected_nodes_by_level = self._normalize_selected_nodes_by_level(selected_nodes_by_level)
         # Phase 1: Context Bridge
-        ctx = self.bridge.process(current_prompt)
+        ctx = self.bridge.process(current_prompt, last_msg=last_msg, prev_msg=prev_msg)
         trace = {
             "selected_nodes_by_level": {},
             "constraint_path_ids": [],
@@ -257,23 +259,19 @@ class ActivePathRetrieval:
         return list(reversed(chain))
 
     def _find_topic_by_chain(self, session, chain: list) -> Optional[Topic]:
-        """Walk the topic tree to find the node matching the chain."""
+        """Walk the cached topic tree to find the node matching the chain."""
         if not chain:
             return None
         
+        tree = get_tree_cache()
         current = None
-        for level, name in enumerate(chain):
-            query = session.query(Topic).filter(
-                Topic.name.ilike(name), Topic.level == level
-            )
-            if current:
-                query = query.filter(Topic.parent_id == current.id)
-            else:
-                query = query.filter(Topic.parent_id.is_(None))
-            
-            current = query.first()
-            if not current:
+        for name in chain:
+            parent_id = current.id if current else None
+            pool = tree.children_map.get(parent_id, [])
+            match = next((t for t in pool if (t.name or "").lower() == name.lower()), None)
+            if not match:
                 return None
+            current = match
         
         return current
 
