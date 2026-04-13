@@ -46,6 +46,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Dev no-cache middleware ────────────────────────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    """Force browsers to always fetch fresh static files during development."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static") or request.url.path in ("/", "/graph", "/explore"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+app.add_middleware(NoCacheMiddleware)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 db_manager = DatabaseManager()
@@ -294,7 +310,7 @@ def explorer_ui():
 
 
 @app.get("/tree")
-def get_tree(depth: int = Query(default=3, ge=1, le=10)):
+def get_tree(depth: int = Query(default=3, ge=0, le=10)):
     """Return the topic hierarchy up to `depth` levels deep."""
     tree = get_tree_cache()
     return {
@@ -304,7 +320,7 @@ def get_tree(depth: int = Query(default=3, ge=1, le=10)):
 
 
 @app.get("/node/{node_id}/tree")
-def get_node_tree(node_id: int, depth: int = Query(default=3, ge=1, le=10)):
+def get_node_tree(node_id: int, depth: int = Query(default=3, ge=0, le=10)):
     """Return a node plus its descendants up to `depth` levels deep."""
     return {
         "depth": depth,
@@ -356,6 +372,101 @@ def retrieve(req: RetrieveRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/topic-suggestions")
+def topic_suggestions(
+    q: str = Query(..., min_length=3),
+    limit: int = Query(default=3, ge=1, le=6),
+    max_level: int = Query(default=2, ge=0, le=4),
+):
+    """
+    Return a few semantically relevant topic nodes for query-time constraint suggestions.
+    The search stays intentionally coarse by looking only at higher-level topic nodes.
+    """
+    query = q.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    pipeline = get_pipeline()
+    ctx = pipeline.bridge.process(query)
+    query_vec = ctx.query_vector
+    if query_vec is None:
+        return {"query": query, "suggestions": []}
+    query_norm = float(np.linalg.norm(query_vec))
+    if not np.isfinite(query_norm) or query_norm <= 0:
+        return {"query": query, "suggestions": []}
+
+    tree = get_tree_cache()
+    session = Session()
+    try:
+        topics = (
+            session.query(Topic)
+            .filter(Topic.embedding.isnot(None))
+            .filter(Topic.level <= max_level)
+            .order_by(Topic.level.asc(), Topic.name.asc())
+            .all()
+        )
+
+        scored = []
+        for topic in topics:
+            topic_vec = tree.embedding_cache.get(topic.id)
+            if topic_vec is None:
+                continue
+            topic_norm = float(np.linalg.norm(topic_vec))
+            if not np.isfinite(topic_norm) or topic_norm <= 0:
+                continue
+            cosine = float(np.dot(topic_vec, query_vec) / (topic_norm * query_norm))
+            if not np.isfinite(cosine):
+                continue
+            relevance = max(0.0, min(1.0, (cosine + 1.0) / 2.0))
+            scored.append((relevance, topic))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+
+        suggestions = []
+        seen_topic_ids = set()
+        chosen_path_ids = []
+        for score, topic in scored:
+            if topic.id in seen_topic_ids:
+                continue
+            seen_topic_ids.add(topic.id)
+
+            chain = []
+            chain_ids = []
+            current = tree.topic_by_id.get(topic.id)
+            while current is not None:
+                chain.append(current.name)
+                chain_ids.append(current.id)
+                current = tree.parent_map.get(current.id)
+            chain.reverse()
+            chain_ids.reverse()
+
+            # Prefer diverse suggestions over multiple picks from the same ancestor chain.
+            shares_chain = any(
+                existing_topic_id in chain_ids or topic.id in existing_path
+                for existing_path in chosen_path_ids
+                for existing_topic_id in existing_path
+            )
+            if shares_chain:
+                continue
+
+            suggestions.append({
+                "id": topic.id,
+                "name": topic.name,
+                "level": topic.level,
+                "path": " > ".join(chain),
+                "path_ids": chain_ids,
+                "description": topic.description or "",
+                "score": round(score, 4),
+            })
+            chosen_path_ids.append(chain_ids)
+            if len(suggestions) >= limit:
+                break
+
+        return {"query": query, "suggestions": suggestions}
+    finally:
+        session.close()
 
 
 @app.post("/ingest")

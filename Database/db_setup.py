@@ -66,6 +66,7 @@ class TriadBlock(Base):
     id = Column(Integer, primary_key=True)             
     timestamp = Column(DateTime, default=datetime.now)
     raw_msg = Column(String)
+    raw_llm_response = Column(String, nullable=True)
     source_session_id = Column(String, nullable=True, index=True)  # Provenance: which session this came from
     generated_episodic = relationship("EpisodicMemory", back_populates="message")
     generated_user = relationship("UserMemory", back_populates="message")

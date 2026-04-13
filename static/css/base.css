@@ -1,0 +1,485 @@
+/* ══════════════════════════════════════════════
+   MindCache Design System — v4 (GitHub-style)
+   ══════════════════════════════════════════════ */
+
+:root {
+  /* Surfaces */
+  --color-canvas: #f6f8fa;
+  --color-canvas-subtle: #f0f3f6;
+  --color-surface: #ffffff;
+  --color-surface-overlay: #ffffff;
+  --color-border: #d1d9e0;
+  --color-border-subtle: #e8ecf0;
+
+  /* Text */
+  --color-text: #1f2328;
+  --color-text-secondary: #656d76;
+  --color-text-tertiary: #848d97;
+  --color-text-on-emphasis: #ffffff;
+
+  /* Accent (primary blue — like GitHub) */
+  --color-accent: #0969da;
+  --color-accent-emphasis: #0550ae;
+  --color-accent-subtle: rgba(9, 105, 218, 0.1);
+
+  /* Success */
+  --color-success: #1a7f37;
+  --color-success-subtle: rgba(26, 127, 55, 0.1);
+
+  /* Danger */
+  --color-danger: #d1242f;
+  --color-danger-subtle: rgba(209, 36, 47, 0.1);
+
+  /* Teal (brand accent for MindCache) */
+  --color-brand: #0d7a9b;
+  --color-brand-emphasis: #09607a;
+  --color-brand-subtle: rgba(13, 122, 155, 0.08);
+
+  /* Graph Node States (read by JS via getCss) */
+  --default-node: var(--color-surface);
+  --user-node: #e6f4ea;
+  --llm-node: #e8f0fe;
+  --final-node: #ceead6;
+  --removed-node: #fce8e6;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 0 rgba(31,35,40,0.04);
+  --shadow-md: 0 3px 6px rgba(140,149,159,0.15);
+  --shadow-lg: 0 8px 24px rgba(140,149,159,0.2);
+  --shadow-xl: 0 12px 28px rgba(140,149,159,0.3);
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* Typography */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+
+  /* Easing */
+  --ease: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-canvas);
+}
+
+body.graph-only-page {
+  overflow: hidden;
+}
+
+/* ══ NAVBAR ══════════════════════════════════ */
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--color-text);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  flex-shrink: 0;
+}
+
+.nav-brand-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--color-brand), var(--color-brand-emphasis));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.nav-link:hover {
+  background: var(--color-canvas-subtle);
+  color: var(--color-text);
+}
+
+.nav-link.is-active {
+  font-weight: 600;
+  color: var(--color-text);
+  background: var(--color-canvas-subtle);
+}
+
+.nav-spacer {
+  flex: 1;
+}
+
+.nav-status {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* ══ CARDS / PANELS ══════════════════════════ */
+.panel-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 16px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* ══ PILLS / BADGES ══════════════════════════ */
+.section-kicker {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-canvas-subtle);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.meta-pill,
+.chip,
+.trace-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.meta-pill {
+  padding: 2px 8px;
+  background: var(--color-canvas-subtle);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.chip {
+  padding: 4px 10px;
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+  border: 1px solid rgba(26, 127, 55, 0.2);
+}
+
+.trace-pill {
+  padding: 4px 10px;
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border: 1px solid rgba(9, 105, 218, 0.15);
+}
+
+/* ══ BUTTONS ═════════════════════════════════ */
+button {
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 80ms ease, border-color 80ms ease, box-shadow 80ms ease;
+}
+
+button:hover {
+  /* no translateY — GitHub doesn't bounce buttons */
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+.primary-button {
+  background: var(--color-brand);
+  color: var(--color-text-on-emphasis);
+  border: 1px solid var(--color-brand-emphasis);
+  box-shadow: var(--shadow-sm);
+}
+
+.primary-button:hover {
+  background: var(--color-brand-emphasis);
+}
+
+.ghost-button {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.ghost-button:hover {
+  background: var(--color-canvas-subtle);
+  border-color: var(--color-border);
+}
+
+.danger-button {
+  background: var(--color-danger);
+  color: white;
+  border: 1px solid var(--color-danger);
+}
+
+.icon-button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Focus rings */
+button:focus-visible,
+a:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.3);
+}
+
+/* ══ FORMS ═══════════════════════════════════ */
+textarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* ══ LAYOUT HELPERS ══════════════════════════ */
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.button-row.tight {
+  margin-top: 0;
+  gap: 6px;
+}
+
+/* ══ NAVIGATION LINKS ════════════════════════ */
+.page-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  transition: background 80ms ease;
+}
+
+.page-link:hover {
+  background: var(--color-canvas-subtle);
+}
+
+.page-link-strong {
+  background: var(--color-brand);
+  color: white;
+  border-color: var(--color-brand-emphasis);
+}
+
+.page-link-strong:hover {
+  background: var(--color-brand-emphasis);
+  color: white;
+}
+
+/* ══ TEXT UTILITIES ═══════════════════════════ */
+.status-line,
+.inspector-path,
+.inspector-copy {
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.status-line {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 16px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ══ CHIP LIST / PATH ════════════════════════ */
+.chip-list,
+.trace-summary,
+.inspector-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.path-chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.path-chain-item {
+  display: block;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-canvas-subtle);
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ══ PAGER ════════════════════════════════════ */
+.root-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pager-label {
+  min-width: 56px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* ══ ANIMATIONS ══════════════════════════════ */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ══ TOAST NOTIFICATIONS ═════════════════════ */
+.toast {
+  position: fixed;
+  top: 60px;
+  right: 16px;
+  z-index: 10000;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
+  pointer-events: none;
+  animation: toast-in 200ms ease both, toast-out 200ms ease 2.5s both;
+}
+
+.toast-success {
+  background: var(--color-success);
+  box-shadow: 0 4px 12px rgba(26, 127, 55, 0.3);
+}
+
+.toast-error {
+  background: var(--color-danger);
+  box-shadow: 0 4px 12px rgba(209, 36, 47, 0.3);
+}
+
+.toast-info {
+  background: var(--color-brand);
+  box-shadow: 0 4px 12px rgba(13, 122, 155, 0.3);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}

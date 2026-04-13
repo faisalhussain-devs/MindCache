@@ -1,0 +1,230 @@
+/* ══ Explorer Page ═══════════════════════════ */
+
+.explorer-page {
+  overflow: auto;
+}
+
+.explorer-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Toolbar row — breadcrumbs + actions */
+.explorer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.explorer-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.explorer-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Breadcrumbs */
+.breadcrumb-trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.breadcrumb-trail:empty {
+  display: none;
+}
+
+.breadcrumb-chip {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.breadcrumb-chip:hover {
+  background: var(--color-canvas-subtle);
+  border-color: var(--color-brand);
+}
+
+/* Selection sidebar */
+.explorer-selection-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Stage — the card grid area */
+.explorer-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.explorer-stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.explorer-stage-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.explorer-stage-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* Card grid */
+.explorer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+/* Individual node cards */
+.explorer-node-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  animation: card-enter 200ms ease both;
+  cursor: pointer;
+  position: relative;
+}
+
+.explorer-node-card:hover {
+  border-color: var(--color-brand);
+  box-shadow: var(--shadow-md);
+}
+
+.explorer-node-card.is-selected {
+  border-left: 3px solid var(--color-success);
+  background: #f0fdf4;
+}
+
+/* Card head */
+.explorer-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.explorer-card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.explorer-card-head .meta-pill {
+  flex-shrink: 0;
+}
+
+/* Hover-reveal actions */
+.explorer-card-actions-top {
+  margin-top: auto;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.explorer-node-card:hover .explorer-card-actions-top {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.explorer-node-card.is-selected .explorer-card-actions-top {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.explorer-card-actions-top .ghost-button,
+.explorer-card-actions-top .primary-button {
+  font-size: 12px;
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Context sidebar */
+.explorer-context-card {
+  /* uses panel-card base */
+}
+
+.explorer-context-card .path-chain-list {
+  gap: 4px;
+}
+
+.explorer-path-button {
+  width: 100%;
+  text-align: left;
+}
+
+.explorer-context-card .path-chain-item,
+.explorer-path-button {
+  font-size: 12px;
+}
+
+.explorer-chip {
+  border-radius: var(--radius-pill);
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.explorer-empty-card {
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  font-size: 13px;
+}

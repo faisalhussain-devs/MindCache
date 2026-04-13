@@ -30,7 +30,7 @@ class SubCategory(BaseModel):
 class LeafSplitSchema(BaseModel):
     sub_categories: List[SubCategory] = Field(description="List of sub-categories to split the overloaded leaf into. Each memory ID must appear in exactly one sub-category.")
 
-TOKEN_LIMIT = 30000
+TOKEN_LIMIT = 3000
 
 def estimate_tokens(text: str) -> int:
     return len(text) // 4

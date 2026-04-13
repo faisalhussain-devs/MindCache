@@ -36,7 +36,7 @@ class SafeAI:
         temperature: float = 0.1,
         max_tokens: int = 128000,
         json_schema: dict | None = None,
-        retries: int = 5,
+        retries: int = 1,
         retrieval = None
     ):
         for attempt in range(retries):
@@ -53,14 +53,13 @@ class SafeAI:
                 if json_schema:
                     config.response_mime_type = "application/json"
                     config.response_schema = self._clean_schema(json_schema)
-
                 response = self.client.models.generate_content(
                     model=self.model_name,
                     contents=prompt,
                     config=config,
                 )
 
-                time.sleep(8)
+
                 raw_text = self._extract_text(response)
                 return self.clean_json(raw_text) if raw_text else None
 

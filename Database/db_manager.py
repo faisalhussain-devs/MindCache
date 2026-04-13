@@ -22,13 +22,14 @@ class DatabaseManager:
         """Convert bytes back to numpy array"""
         return np.frombuffer(blob, dtype=np.float32)
 
-    def add_to_queue(self, prompt, response, next_prompt):
+    def add_to_queue(self, prompt, response, next_prompt, timestamp=None):
         session = self.Session()
         try:
             new_job = ProcessingJob(
                 raw_prompt=prompt,
                 raw_response=response,
-                raw_next_prompt=next_prompt
+                raw_next_prompt=next_prompt,
+                timestamp=timestamp
             )
             session.add(new_job)
             session.commit()
@@ -39,11 +40,11 @@ class DatabaseManager:
         finally:
             session.close()
 
-    def get_pending_job(self, max_retries=3):
+    def get_pending_job(self, max_retries=33):
         session = self.Session()
         try:
             job = session.query(ProcessingJob)\
-                .filter(ProcessingJob.status.in_(['pending', 'failed']))\
+                .filter(ProcessingJob.status.in_(["processing", "pending", "failed"]))\
                 .filter(ProcessingJob.retry_count < max_retries)\
                 .order_by(ProcessingJob.timestamp.asc())\
                 .first()
@@ -144,7 +145,7 @@ class DatabaseManager:
             
         return current_node
 
-    def get_topic_tree_hints(self, max_depth=2):
+    def get_topic_tree_hints(self, max_depth=4):
         """
         Returns a formatted string of existing topic paths for prompt grounding.
         Lightweight: just queries root + first three levels.
@@ -171,7 +172,7 @@ class DatabaseManager:
         finally:
             session.close()
 
-    def save_extracted_memory(self, job_id, raw_msg, extracted_data, source_session_id=None, session_timestamp=None):
+    def save_extracted_memory(self, job_id, raw_msg, extracted_data, source_session_id=None, session_timestamp=None, raw_llm_response=None):
         session = self.Session()
         try:
             # Timestamp priority: session_timestamp (dataset) > job.timestamp > now()
@@ -189,7 +190,7 @@ class DatabaseManager:
             memory_buckets = extracted_data.get("memory", [])
             
             if not memory_buckets:
-                print(f"[DB] Job {job_id} discarded")
+                print(f"[DB] Job {job_id} discarded (no memory buckets).")
                 session.execute(text("DELETE FROM processing_queue WHERE id=:id"), {"id": job_id})
                 session.commit()
                 return
@@ -197,7 +198,8 @@ class DatabaseManager:
             new_message = TriadBlock(
                 raw_msg=raw_msg, 
                 timestamp=ts,
-                source_session_id=source_session_id
+                source_session_id=source_session_id,
+                raw_llm_response=raw_llm_response
             )
             session.add(new_message)
             session.flush()
@@ -210,11 +212,11 @@ class DatabaseManager:
 
                 topic_leaf_node = self._get_or_create_topic_path(session, full_chain, job_timestamp=ts)
 
-                # Map bucket keys to (MemoryClass, registry_type)
+                # Map JSON schema bucket keys to (MemoryClass, registry_type)
                 type_map = {
                     "user": (UserMemory, "user"),
                     "fact": (KnowledgeMemory, "knowledge"),
-                    "episodic": (EpisodicMemory, "episodic"),
+                    "epis": (EpisodicMemory, "episodic"),
                     "decision": (DecisionMemory, "decision"),
                 }
 
@@ -223,7 +225,37 @@ class DatabaseManager:
                     if not texts:
                         continue
                     
-                    for text in texts:
+                    for mem_text in texts:
+                        # ── Deduplication check ───────────────────────────
+                        # For user memories, check globally (user profile entries repeat across topics).
+                        # For all other types, check within the same topic only.
+                        from difflib import SequenceMatcher
+                        DEDUP_THRESHOLD = 0.75
+
+                        if MemoryClass == UserMemory:
+                            existing = session.query(UserMemory.content).all()
+                        else:
+                            existing = session.query(MemoryClass.content).filter(
+                                MemoryClass.topic_id == topic_leaf_node.id
+                            ).all()
+
+                        is_duplicate = False
+                        mem_text_lower = mem_text.lower().strip()
+                        for (existing_content,) in existing:
+                            if not existing_content:
+                                continue
+                            ratio = SequenceMatcher(
+                                None, mem_text_lower, existing_content.lower().strip()
+                            ).ratio()
+                            if ratio >= DEDUP_THRESHOLD:
+                                print(f"[DB] Dedup: skipped near-duplicate {registry_type} (ratio={ratio:.2f}): {mem_text[:60]}...")
+                                is_duplicate = True
+                                break
+
+                        if is_duplicate:
+                            continue
+                        # ── End deduplication ──────────────────────────────
+
                         # Register in global registry first
                         reg = MemoryRegistry(memory_type=registry_type)
                         session.add(reg)
@@ -232,7 +264,7 @@ class DatabaseManager:
                         if MemoryClass == DecisionMemory:
                             atom = MemoryClass(
                                 id=reg.id,
-                                content=text,
+                                content=mem_text,
                                 topic=topic_leaf_node,
                                 message=new_message,
                                 timestamp=ts,
@@ -241,7 +273,7 @@ class DatabaseManager:
                         else:
                             atom = MemoryClass(
                                 id=reg.id,
-                                content=text,
+                                content=mem_text,
                                 topic=topic_leaf_node,
                                 message=new_message,
                                 timestamp=ts
@@ -310,9 +342,12 @@ class DatabaseManager:
             if not job:
                 print("No more jobs in queue. Worker going to sleep.")
                 break
-
             job_id, prompt, response, next_prompt = job["id"], job["raw_prompt"], job["raw_response"], job["raw_next_prompt"]
-            full_text = f"<user> {prompt} <llm> {response} <user> {next_prompt}"
+            # Support both formats: consolidated (text already in prompt) and legacy (separate fields)
+            if response:
+                full_text = f"<user> {prompt} <llm> {response} <user> {next_prompt}"
+            else:
+                full_text = prompt  # Already consolidated with <user>/<llm> tags
             compressed_input = inp_denoiser.compress(full_text)
             print(f"\n[Worker] Processing Job #{job_id}...")
         
@@ -321,5 +356,9 @@ class DatabaseManager:
             self.save_extracted_memory(
                 job_id,
                 compressed_input, 
-                extracted_data
+                extracted_data,
+                raw_llm_response=response
             )
+if __name__ == "__main__":
+    db_manager = DatabaseManager()
+    db_manager.process_memory() 

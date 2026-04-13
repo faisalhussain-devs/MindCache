@@ -12,6 +12,8 @@ class RetrievalConfig:
     
     # Root Search (Phase 2)
     root_threshold: float = 0.05
+    llm_choice_threshold: int = 7
+    llm_max_selected: int = 6
     
     # Root Descent (Phase 3)
     descent_threshold: float = 0.05

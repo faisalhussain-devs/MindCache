@@ -31,6 +31,13 @@ class SubCategory(BaseModel):
 class LeafSplitSchema(BaseModel):
     sub_categories: List[SubCategory] = Field(description="List of sub-categories to split the overloaded leaf into. Each memory ID must appear in exactly one sub-category.")
 
+class NodeGrouping(BaseModel):
+    category_name: str = Field(description="Name of the new intermediate grouping category.")
+    child_ids: List[int] = Field(description="List of original child node IDs that belong in this group.")
+
+class GroupOvergrownChildrenSchema(BaseModel):
+    groupings: List[NodeGrouping] = Field(description="List of new intermediate categories to group the overgrown children into. Every child ID must be grouped.")
+
 TOKEN_LIMIT = 3000
 
 def estimate_tokens(text: str) -> int:
@@ -777,9 +784,10 @@ def two_step_bootstrap(session, full_tree_text, children_map=None, node_map=None
         ALL NODES:
         {tree_text}
         """
-    for group in groups:
+    for i, group in enumerate(groups):
+        print(i, group[0], group[1])
         if group[0] > TOKEN_LIMIT:
-            raise ValueError("ERROR ROOT EXCEEDING THE TOKEN LIMIT")
+            print("ERROR ROOT EXCEEDING THE TOKEN LIMIT----WILL LATER OPTIMISE IT")
         apply_mapping(
             session,
             ai,
@@ -1081,9 +1089,136 @@ def pass_targeted_vector(session, full_tree_text, top_k=3, parent_map=None, chil
     return all_successfully_mapped_nodes
 
 
+FANOUT_THRESHOLD = 10
+
+def _shift_levels_recursively(node, offset):
+    if offset == 0:
+        return
+    stack = [node]
+    while stack:
+        curr = stack.pop()
+        curr.level += offset
+        stack.extend(curr.children)
+
+def group_overgrown_children(session, changed_nodes=None, children_map=None, parent_map=None, topic_by_id=None, dry_run=True):
+    """Find parent nodes with 10+ children and cluster them using the LLM."""
+    if changed_nodes is None:
+        changed_nodes = []
+        
+    ai = SafeAI()
+    
+    overgrown = []
+    
+    for parent_id, child_nodes in children_map.items():
+        if parent_id is None:
+            continue
+        if len(child_nodes) >= FANOUT_THRESHOLD:
+            overgrown.append(parent_id)
+
+    if not overgrown:
+        print(f"[Fan-Out Limit] No nodes with >= {FANOUT_THRESHOLD} children found.")
+        return
+
+    print(f"\n[Fan-Out Limit] Found {len(overgrown)} overgrown parent nodes.")
+    
+    system_prompt = "You are an expert taxonomist enforcing logarithmic tree sorting. Output valid JSON."
+
+    new_intermediate_nodes = []
+
+    for node_id in overgrown:
+        children = children_map[node_id]
+        children_info = []
+        for c in children:
+            desc = (c.description or "No description").replace('\n', ' ')
+            children_info.append(f"ID {c.id} | Name: {c.name} | Desc: {desc[:200]}...")
+            
+        children_text = "\n".join(children_info)
+        node = topic_by_id[node_id]
+        chain_path = build_chain_path_text(node, parent_map)
+        
+        prompt = f"""We are enforcing fan-out limits. A parent node has {len(children)} direct children. You must cluster these children into 3-6 logical intermediate categories.        
+            PARENT NODE: {chain_path}
+
+            CHILDREN TO ORGANIZE:
+            {children_text}
+
+            INSTRUCTIONS:
+            1. Identify 3 to 6 logical sub-categories required to encompass these children.
+            2. The category names should be very concise and semantic.
+            3. Every single child ID listed above MUST be placed into exactly one of these new intermediate grouping categories.
+            4. Output valid JSON matching the schema."""
+
+        raw_json = ai.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            json_schema=GroupOvergrownChildrenSchema.model_json_schema()
+        )
+        if not raw_json:
+            print(f"  [Fan-Out Limit] LLM failed for '{node.name}'")
+            continue
+            
+        try:
+            data = json.loads(raw_json)
+            groupings = data.get("groupings", [])
+        except json.JSONDecodeError as e:
+            print(f"  [Fan-Out Limit] JSON Decode Error: {e}")
+            continue
+
+        if dry_run:
+            print(f"  [Fan-Out Limit DRY RUN] Would cluster '{node.name}' into {len(groupings)} groups.")
+            for group in groupings:
+                print(f"    - Cluster '{group['category_name']}' -> Child IDs: {group.get('child_ids', [])}")
+            continue
+            
+        child_lookup = {c.id: c for c in children}
+        assigned_ids = set()
+        
+        for group in groupings:
+            cat_name = group.get("category_name")
+            c_ids = [cid for cid in group.get("child_ids", []) if cid in child_lookup]
+            
+            if not c_ids or not cat_name:
+                continue
+                
+            intermediate = Topic(
+                name=cat_name,
+                level=node.level + 1,
+                parent=node,
+                is_groomed=1,
+                chain_updated_at=datetime.now(),
+                timestamp=datetime.now()
+            )
+            session.add(intermediate)
+            session.flush()
+            new_intermediate_nodes.append(intermediate)
+            
+            for cid in c_ids:
+                if cid in assigned_ids: continue
+                child_node = child_lookup[cid]
+                old_level = child_node.level
+                child_node.parent = intermediate
+                offset = (intermediate.level + 1) - old_level
+                
+                if offset != 0:
+                    _shift_levels_recursively(child_node, offset)
+                    
+                assigned_ids.add(cid)
+                
+            print(f"    Created node '{cat_name}' and re-parented {len(c_ids)} children.")
+
+        # Warn about any children the LLM failed to assign
+        unassigned = set(child_lookup.keys()) - assigned_ids
+        if unassigned:
+            print(f"  [Fan-Out Limit] WARNING: {len(unassigned)} children left unassigned for '{node.name}': IDs {sorted(unassigned)}")
+            
+        session.flush()
+        
+    changed_nodes.extend(new_intermediate_nodes)
+
+
 SPLIT_THRESHOLD = 25
 
-def split_overloaded_leaves(session, changed_nodes = None, dry_run=True):
+def split_overloaded_leaves(session, changed_nodes = None, parent_map = None, dry_run=True):
     """Find leaf nodes with 25+ memories and split them into sub-categories using the LLM."""
     ai = SafeAI()
     embedder = EmbeddingManager()
@@ -1110,7 +1245,7 @@ def split_overloaded_leaves(session, changed_nodes = None, dry_run=True):
     
     for node, total in overloaded:
         # Build chain path for context
-        chain_path = build_chain_path_text(node)
+        chain_path = build_chain_path_text(node, parent_map)
         
         # Collect all memories with their IDs and types
         memory_entries = []
@@ -1368,8 +1503,7 @@ def reorganize_tree(dry_run=True):
         topics = session.query(Topic).all()
         for t in topics:
             topic_by_id[t.id] = t
-            if t.parent_id is not None:
-                children_map[t.parent_id].append(t)
+            children_map[t.parent_id].append(t)
         parent_map = {t.id: topic_by_id.get(t.parent_id) for t in topics}
         if last_root_count == current_root_count:
             print(f"[Root Orthogonality] Skipping Phase 0: root count unchanged at {current_root_count}.")
@@ -1383,7 +1517,8 @@ def reorganize_tree(dry_run=True):
             nodes = two_step_bootstrap(session, full_tree_text, children_map=children_map, node_map=topic_by_id)
         cleanup_roots(session)
         # Post-processing: split any overloaded leaf nodes
-        split_overloaded_leaves(session, nodes, dry_run=dry_run)
+        split_overloaded_leaves(session, nodes, parent_map=parent_map, dry_run=dry_run)
+        group_overgrown_children(session, nodes, children_map, parent_map, topic_by_id, dry_run=dry_run)
             
     finally:
         session.close()

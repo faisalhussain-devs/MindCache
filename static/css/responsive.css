@@ -1,0 +1,69 @@
+/* --- Responsive — INDEX / WORKBENCH page (original breakpoint) --- */
+@media (max-width: 1160px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .explorer-shell {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "hero"
+      "context"
+      "stage";
+  }
+
+  .explorer-context-card {
+    position: static;
+  }
+
+  .graph-bottom-grid,
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- Responsive — GRAPH-ONLY page (lower breakpoint) --- */
+@media (max-width: 860px) {
+  .graph-only-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .graph-side-panel {
+    grid-template-rows: auto auto;
+    overflow: visible;
+  }
+
+  .graph-viewport {
+    height: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .explorer-shell,
+  .graph-only-shell {
+    margin: 8px;
+    height: calc(100vh - 16px);
+    padding: 10px;
+  }
+
+  .explorer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-card {
+    padding: 11px;
+    border-radius: 14px;
+  }
+
+  .graph-viewport {
+    height: 100%;
+  }
+}
+
