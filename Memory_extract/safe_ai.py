@@ -40,7 +40,6 @@ class SafeAI:
         retrieval = None
     ):
         for attempt in range(retries):
-            
             try:
                 config = types.GenerateContentConfig(
                     temperature=temperature,
@@ -58,13 +57,18 @@ class SafeAI:
                     contents=prompt,
                     config=config,
                 )
-
-
                 raw_text = self._extract_text(response)
                 return self.clean_json(raw_text) if raw_text else None
 
             except Exception as e:
                 error_msg = str(e).lower()
+                
+                # Catch 503 High Demand / Global Overload
+                if "503" in error_msg or "demand" in error_msg or "spike" in error_msg:
+                    print(f"[SafeAI] API High Demand (503). Waiting 10s... ({error_msg})")
+                    time.sleep(10)
+                    continue
+
                 # Catch 429 Too Many Requests or 403 Resource Exhausted
                 if "429" in error_msg or "403" in error_msg or "exhausted" in error_msg or "quota" in error_msg:
                     print(f"[SafeAI] API Error: Quota exhausted or rate limited ({error_msg}).")

@@ -30,10 +30,17 @@ from Database.db_setup import engine, Topic, EpisodicMemory, UserMemory, Knowled
 from Database.db_manager import DatabaseManager
 from dataclasses import dataclass, field
 import time
+from contextlib import asynccontextmanager
 
+@asynccontextmanager
+async def lifespan(app):
+    from retrieval.root_cache import root_leaf_cache
+    root_leaf_cache.load()     # Load from disk — no-op if file missing
+    yield
+    root_leaf_cache.save()
 
 # App setup
-app = FastAPI(title="MindCache API", version="1.0.0")
+app = FastAPI(title="MindCache API", version="1.0.0", lifespan=lifespan)
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
@@ -207,6 +214,19 @@ def get_tree_cache():
         return Tree(session)
     finally:
         session.close()
+
+def refresh_tree_cache():
+    """
+    Clear the tree cache AND the root leaf cache.
+    Call this instead of get_tree_cache.cache_clear() directly
+    so both caches stay in sync.
+    """
+    get_tree_cache.cache_clear()
+    try:
+        from retrieval.root_cache import root_leaf_cache
+        root_leaf_cache.clear()
+    except ImportError:
+        pass
 
 def _serialize_node(node_id: int, depth: int, max_depth: int) -> dict:
     tree = get_tree_cache()

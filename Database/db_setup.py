@@ -36,8 +36,8 @@ class Topic(Base):
     embedding = Column(LargeBinary)
     description = Column(String) # description of the node and its subnodes, helpful for retreival
     timestamp = Column(DateTime, default=datetime.now) 
-    is_groomed = Column(Integer, default=0) # SQLite doesn't have strict boolean, 0=False, 1=True
-    chain_updated_at = Column(DateTime, default=datetime.now)
+    mem_start = Column(DateTime, nullable=True)
+    mem_end   = Column(DateTime, nullable=True)
 
     parent_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
     children = relationship("Topic", 

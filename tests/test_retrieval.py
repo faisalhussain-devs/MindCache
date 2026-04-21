@@ -19,7 +19,7 @@ import retrieval.active_path as active_path_module
 import retrieval.root_descent as root_descent_module
 from Database.db_setup import Base, Topic, EpisodicMemory, DecisionMemory, MemoryRegistry
 from api_server import get_tree_cache
-from retrieval.node_selector import AdaptiveNodeSelector, SelectionResult
+from useless.node_selector import AdaptiveNodeSelector, SelectionResult
 from retrieval.structs import RetrievalContext, CandidateTopic
 
 class TestRetrievalPipeline(unittest.TestCase):

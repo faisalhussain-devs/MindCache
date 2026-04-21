@@ -13,6 +13,7 @@ from retrieval.context_bridge import ContextBridge
 from retrieval.root_search import RootSearch
 from retrieval.root_descent import RootDescent
 from retrieval.agentic_refiner import AgenticRefiner
+import time
 from Database.nodes_summary import RecursiveSummarizer
 from api_server import get_tree_cache
 
@@ -23,10 +24,8 @@ class ActivePathRetrieval:
         self.config = config
         self.Session = sessionmaker(bind=engine)
         self.summarizer = RecursiveSummarizer()
-        
         # Initialize Shared Resources
         self.embedder = EmbeddingManager()
-        
         # Initialize Phases
         self.bridge = ContextBridge(self.embedder, self.config)
         self.search = RootSearch(self.config, self.bridge)
@@ -48,7 +47,9 @@ class ActivePathRetrieval:
         4. Refiner → selected topics + depth
         5. DB Fetch → actual data (summary or leaf memories)
         """
+        start = time.time()
         selected_nodes_by_level = self._normalize_selected_nodes_by_level(selected_nodes_by_level)
+
         # Phase 1: Context Bridge
         ctx = self.bridge.process(current_prompt, last_msg=last_msg, prev_msg=prev_msg)
         trace = {
@@ -60,6 +61,8 @@ class ActivePathRetrieval:
             "selected_topic_ids": [],
             "selected_topics": [],
         }
+        bridge_phase = time.time()
+        print("time Taken for bridge phase", bridge_phase - start)
 
         constrained = self._resolve_selected_nodes(selected_nodes_by_level)
         trace["selected_nodes_by_level"] = {
@@ -71,23 +74,37 @@ class ActivePathRetrieval:
         # Phase 2/3: Either honor the user-selected path or let Root Search choose roots
         if constrained["starting_nodes"]:
             trace["root_ids"] = constrained["root_ids"]
-            candidates = self.descent.descend(
-                constrained["starting_nodes"],
-                ctx,
-                include_start_nodes=True,
-                force_full_subtree=False,
-            )
+            
+            # Constrained mode: build a dummy sub-query for descent engine
+            ctx.sub_queries = [{
+                "text": ctx.query_text,
+                "roots": constrained["starting_nodes"]
+            }]
+            root_phase = time.time()
+            print("time Taken for root phase", root_phase - bridge_phase)
+            candidates = self.descent.descend(ctx)
+            descent_phase = time.time()
+            print("time Taken for descent phase", descent_phase - root_phase)
         else:
-            root_nodes = self.search.scan(ctx)
-            trace["root_ids"] = [root.id for root in root_nodes]
-            if not root_nodes:
+            sub_queries = self.search.scan(ctx)
+            root_phase = time.time()
+            print("time Taken for root phase", root_phase - bridge_phase)
+            ctx.sub_queries = sub_queries
+            
+            # Trace all matched root IDs
+            all_root_ids = set()
+            for sq in sub_queries:
+                all_root_ids.update([r.id for r in sq.get("roots", [])])
+            trace["root_ids"] = list(all_root_ids)
+            
+            if not sub_queries:
                 return RetrievalResult(
                     context="No relevant long-term memory found.",
                     trace=trace,
                 )
-
-            candidates = self.descent.descend(root_nodes, ctx)
-
+            candidates = self.descent.descend(ctx)
+            descent_phase = time.time()
+            print("time Taken for descent phase", descent_phase - root_phase)   
         trace["candidate_topic_ids"] = [candidate.topic_id for candidate in candidates]
         if not candidates:
             return RetrievalResult(
@@ -100,6 +117,8 @@ class ActivePathRetrieval:
             query=ctx.query_text,
             candidates=candidates
         )
+        refine_phase = time.time()
+        print("time Taken for refine phase", refine_phase - descent_phase)
         selected = refined.get("selected_topics", [])
         trace["selected_topics"] = selected
         trace["selected_topic_ids"] = [item.get("id") for item in selected if item.get("id")]
@@ -143,6 +162,8 @@ class ActivePathRetrieval:
                 trace=trace,
             )
         finally:
+            end = time.time()
+            print("time Taken for end phase", end - start)
             session.close()
 
     def _normalize_selected_nodes_by_level(

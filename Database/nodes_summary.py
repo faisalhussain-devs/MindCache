@@ -2,7 +2,6 @@ import json
 from datetime import datetime
 from sqlalchemy import func
 from Database.db_setup import engine, Topic, UserMemory, EpisodicMemory, KnowledgeMemory, DecisionMemory
-from Database.db_manager import DatabaseManager
 from Memory_extract.summary_extractor import Summary_Extractor
 from sqlalchemy.orm import sessionmaker
 
@@ -12,6 +11,18 @@ class RecursiveSummarizer:
     def __init__(self):
         self.Session = sessionmaker(bind=engine)
         self.extractor = Summary_Extractor()
+    
+    def _build_search_text(self, summary_data):
+        """Convert structured summary to plain text for embedding/BM25."""
+        lines = []
+        for _, mems in summary_data.get("memories", {}).items():
+            for content in mems.values():
+                lines.append(content)  # Already has [Episodic]/[Knowledge] prefix
+        for _, decs in summary_data.get("decisions", {}).items():
+            for content in decs.values():
+                lines.append(content)  # Already has [Decision:status] prefix
+        return "\n".join(lines)
+
 
     def get_max_depth(self, session):
         result = session.query(func.max(Topic.level)).scalar()
@@ -31,9 +42,7 @@ class RecursiveSummarizer:
             (UserMemory, 'User'),
             (KnowledgeMemory, 'Knowledge'),
         ]
-
-        min_dt = datetime.fromtimestamp(min_timestamp) if min_timestamp > 0 else datetime.min
-
+        min_dt = datetime.fromtimestamp(min_timestamp) if min_timestamp != 0 else datetime.min
         raw_entries = []
         for Model, type_name in non_decision_models:
             query = session.query(Model).filter(Model.topic_id == topic_id)
@@ -55,25 +64,23 @@ class RecursiveSummarizer:
                 memories_dict[ts_key] = {}
             memories_dict[ts_key][mem_id] = f"[{mem_type}] {content}"
 
-        # --- Decision memories (ordered by last_validated_at) ---
+        # --- Decision memories (ordered by timestamp) ---
         dec_query = session.query(DecisionMemory).filter(
             DecisionMemory.topic_id == topic_id
-        ).order_by(DecisionMemory.last_validated_at.desc())
+        ).order_by(DecisionMemory.timestamp.desc())
         if min_timestamp > 0:
-            dec_query = dec_query.filter(DecisionMemory.last_validated_at > min_dt)
+            dec_query = dec_query.filter(DecisionMemory.timestamp > min_dt)
 
         decisions_dict = {}
         for dec in dec_query.all():
             if not dec.content:
                 continue
-            # Use last_validated_at as the timestamp key
-            ts = dec.last_validated_at or dec.timestamp or datetime.min
-            ts_key = ts.strftime('%Y-%m-%d %H:%M')
-            if ts_key not in decisions_dict:
+            ts_key = (dec.timestamp or datetime.min).strftime('%Y-%m-%d %H:%M')
+            if ts_key not in decisions_dict:    
                 decisions_dict[ts_key] = {}
-            
             ctx = f" | Context: {dec.context}" if dec.context else ""
-            decisions_dict[ts_key][dec.id] = f"[Decision:{dec.status}] {dec.content}{ctx}"
+            validated_str = f" | Last validated: {dec.last_validated_at.strftime('%Y-%m-%d') if dec.last_validated_at else 'never'}"
+            decisions_dict[ts_key][dec.id] = f"[Decision:{dec.status}] {dec.content}{ctx}{validated_str}"
 
         if not memories_dict and not decisions_dict:
             return {}
@@ -122,16 +129,20 @@ class RecursiveSummarizer:
         """
         Leaf Node: 
         1. Summary = JSON { "memories": {...}, "decisions": {...} }
-        2. Description = generated/updated from all memories + decisions w/ status+context
         """
         # Load existing summary state
+
         existing_summary = {"memories": {}, "decisions": {}}
+        min_timestamp = 0
         try:
             if node.summary and node.summary.startswith("{"):
                 parsed = json.loads(node.summary)
                 if "memories" in parsed or "decisions" in parsed:
                     existing_summary = parsed
-                    min_timestamp = max(parsed["memories"].keys(), parsed["decisions"].keys())
+                    all_keys = list(parsed.get("memories", {}).keys()) + list(parsed.get("decisions", {}).keys())
+                    if all_keys:
+                        max_date_str = max(all_keys)
+                        min_timestamp = datetime.strptime(max_date_str, '%Y-%m-%d %H:%M').timestamp() + 60
                 else:
                     raise ValueError("Error: Invalid summary format")
         except Exception as e:
@@ -139,16 +150,11 @@ class RecursiveSummarizer:
             existing_summary = {"memories": {}, "decisions": {}}
 
         new_data = self.get_leaf_summary(session, node.id, min_timestamp=min_timestamp)
-
         if not new_data:
             return
-
         new_memories = new_data.get("memories", {})
         new_decisions = new_data.get("decisions", {})
-
         has_new = False
-        delta_memories = {}
-        delta_decisions = {}
 
         # Merge memories and detect exactly what is new (ID-based instead of time-based)
         if new_memories:
@@ -159,10 +165,7 @@ class RecursiveSummarizer:
                     mid_str = str(mid)
                     if mid_str not in existing_summary["memories"][ts_key]:
                         existing_summary["memories"][ts_key][mid_str] = content
-                        if ts_key not in delta_memories: delta_memories[ts_key] = {}
-                        delta_memories[ts_key][mid_str] = content
                         has_new = True
-
         # Merge decisions
         if new_decisions:
             for ts_key, dec_dict in new_decisions.items():
@@ -172,40 +175,22 @@ class RecursiveSummarizer:
                     did_str = str(did)
                     if did_str not in existing_summary["decisions"][ts_key] or existing_summary["decisions"][ts_key][did_str] != content:
                         existing_summary["decisions"][ts_key][did_str] = content
-                        if ts_key not in delta_decisions: delta_decisions[ts_key] = {}
-                        delta_decisions[ts_key][did_str] = content
                         has_new = True
         
-        node.summary = json.dumps(existing_summary)
-
-        new_text = self._format_leaf_summary({"memories": delta_memories, "decisions": delta_decisions}) if has_new else ""
-
-        if not node.description:
-            print(f"  [Leaf] Init Description for '{node.name}'")
-            desc_prompt = f"""
-            You are generating detailed retrieval descriptions for leaf Topic Nodes inside a memory system.
-            Note: Decisions include their current status and reasoning context.
-            Generate description that covers the full scope of what the leaf contains.
-            Preserve concrete retrieval details when present projects, facts, tasks, preferences, dates, places, numbers, outcomes, and decision context.
-            Information: {new_text}
-            """
-            new_desc = self.extractor.summary_extract(desc_prompt)
-            if new_desc: node.description = new_desc
-        
-        elif new_text:
-            print(f"  [Leaf] Updating Description for '{node.name}'")
-            desc_prompt = f"""
-            Update the following description with new information.
-            Note: Decisions include their status (active/superseded/etc.) and context reasoning.
-            Current Description: {node.description}   
-            New Information: {new_text}
-            """
-            new_desc = self.extractor.summary_extract(desc_prompt)
-            if new_desc: node.description = new_desc
         if has_new:
+            node.summary = json.dumps(existing_summary)
+            node.description = self._build_search_text(existing_summary)
             node.timestamp = datetime.now()
+            # Update mem_start / mem_end from the actual memory timestamp keys
+            all_keys = (list(existing_summary.get("memories", {}).keys()) +
+                        list(existing_summary.get("decisions", {}).keys()))
+            if all_keys:
+                fmt = "%Y-%m-%d %H:%M"
+                parsed = [datetime.strptime(k, fmt) for k in all_keys]
+                node.mem_start = min(parsed)
+                node.mem_end   = max(parsed)
             session.add(node)
-
+        
     def process_parent(self, session, node):
         """
         Parent Node (Source-Map Architecture): 
@@ -217,9 +202,9 @@ class RecursiveSummarizer:
         if len(children) == 1:
             child = children[0]
             node.summary = child.summary
-            node.description = child.description
             node.timestamp = child.timestamp
             node.embedding = child.embedding
+            node.description = child.description
             session.add(node)
             return
 
@@ -233,10 +218,14 @@ class RecursiveSummarizer:
             state = {}
 
         source_map = state.get("source_map", {})
-        ignored_ids = set(state.get("ignored_ids", []))
+        ignored_ids = set(int(x) for x in state.get("ignored_ids", []) if str(x).isdigit())
         
-        updates = []  
-        node_ts = node.timestamp or datetime.min
+        updates_batches = []
+        current_batch = []
+        current_len = 0
+        MAX_CHAR_LIMIT = 28000
+
+        node_ts = node.timestamp or datetime.min + 60
 
         for child in sorted_children:
             child_ts = child.timestamp or datetime.min
@@ -256,123 +245,141 @@ class RecursiveSummarizer:
                 if status == "IGNORED" and len(child_content) < MAJOR_UPDATE_THRESHOLD:
                     continue
                     
-                updates.append(
-                    f"ID {child.id} ({child.name}): {child_content}"
-                )
-        child_text = "\n".join(updates)
+                update_str = f"ID {child.id} ({child.name}): {child_content}"
+                if current_len + len(update_str) > MAX_CHAR_LIMIT and current_batch:
+                    updates_batches.append(current_batch)
+                    current_batch = [update_str]
+                    current_len = len(update_str)
+                else:
+                    current_batch.append(update_str)
+                    current_len += len(update_str)
+        if current_batch:
+            updates_batches.append(current_batch)
 
-        if not updates and source_map:
+        if not updates_batches and source_map:
             return 
-
-        if not source_map and not ignored_ids:
-            print(f"  [Parent] Cold Start Source Mapping for '{node.name}'")
-            
-            prompt = f"""
-            Analyze the following Child Nodes for the Topic '{node.name}'.
-            Create a 'Source Map' of the most important nodes that contribute to the main theme.
-            Mark irrelevant/noise nodes as ignored and Generate a concise, keyword-rich description too.
-
-            Child Nodes:
-            {child_text}
-            
-            Instructions:
-            1. 'source_map': Dictionary mapping Child ID to a 1-sentence contextual summary of why it matters.
-            2. 'ignored_ids': List of Child IDs that are too low-level or irrelevant for a high-level summary.
-            3. 'description': A concise, keyword-rich description for Topic '{node.name}' based on these key points.
-            
-            Output JSON:
-            {{
-              "source_map": {{ "45": "Recursion error fixed in main loop.", ... }},
-              "ignored_ids": [46, 47],
-              "description": "A concise, keyword-rich description for Topic '{node.name}' based on these key points."
-            }}
-            """
-            
-            response_json = self.extractor.summary_extract(prompt)
-
-        else:
-            print(f"  [Parent] Patching Source Map for '{node.name}'")
-            current_map_text = json.dumps(source_map, indent=2)
-            
-            prompt = f"""
-            Update the Parent Source Map based on changes.
-            RETURN ONLY THE CHANGES (Diffs). Do not output unchanged items.
-
-            Current Map:
-            {current_map_text}
-            
-            Current Description:
-            {node.description}
-            
-            Incoming Updates:
-            {child_text}
-            
-            Instructions:
-            1. 'modify': Dictionary of ID -> New Summary.
-            2. 'remove': List of IDs to remove.
-            3. 'add_ignore': List of IDs to add to ignore list.
-            4. 'description': The updated high-level description.
-            
-            Output JSON (The Patch):
-            {{
-              "modify": {{ ... }},
-              "remove": [],
-              "add_ignore": [],
-              "description": "Updated description..."
-            }}
-            """
-            response_json = self.extractor.summary_extract(prompt)
-
-        try:
-            data = {}
-            if isinstance(response_json, str):
-                clean_json = response_json.replace("```json", "").replace("```", "")
-                s = clean_json.find("{")
-                e = clean_json.rfind("}")
-                if s != -1 and e != -1:
-                    clean_json = clean_json[s:e+1]
-                data = json.loads(clean_json)
-            else:
-                data = response_json
-            
+        all_success = True
+        for batch in updates_batches:
+            child_text = "\n".join(batch)
             if not source_map and not ignored_ids:
-                # Cold Start Response Logic
-                source_map = data.get("source_map", {})
-                ignored_ids = set(data.get("ignored_ids", []))
-            else:
-                # Patch Response Logic
-                mods = data.get("modify", {})
-                removes = data.get("remove", [])
-                new_ignores = data.get("add_ignore", [])
-                
-                for uid, text in mods.items():
-                    source_map[str(uid)] = text
-                    if int(uid) in ignored_ids:
-                        ignored_ids.remove(int(uid))
-                
-                for uid in removes:
-                    if str(uid) in source_map:
-                        del source_map[str(uid)]
-                        ignored_ids.add(int(uid))
-                
-                for uid in new_ignores:
-                    ignored_ids.add(int(uid))
+                prompt = f"""
+                Analyze the following Child Nodes for the Topic '{node.name}'.
+                Create a 'Source Map' of the most important nodes that contribute to the main theme.
+                Mark irrelevant/noise nodes as ignored.
 
-            new_desc = data.get("description")
-            if new_desc:
-                node.description = new_desc
-            
+                Child Nodes:
+                {child_text}
+                
+                Instructions:
+                1. 'source_map': Dictionary mapping Child ID to a 1-sentence contextual summary of why it matters.
+                2. 'ignored_ids': List of Child IDs that are too low-level or irrelevant for a high-level summary.
+                        
+                Output JSON:
+                {{
+                  "source_map": {{ "45": "Recursion error fixed in main loop.", ... }},
+                  "ignored_ids": [46, 47],
+                }}
+                """
+                
+                response_json = self.extractor.summary_extract(prompt)
+            else:
+                current_map_text = json.dumps(source_map, indent=2)
+                
+                prompt = f"""
+                Update the Parent Source Map based on changes.
+                RETURN ONLY THE CHANGES (Diffs). Do not output unchanged items.
+
+                Current Map:
+                {current_map_text}
+                
+                Incoming Updates:
+                {child_text}
+                
+                Instructions:
+                1. 'modify': Dictionary of ID -> New Summary.
+                2. 'remove': List of IDs to remove.
+                3. 'add_ignore': List of IDs to add to ignore list.
+                
+                Output JSON (The Patch):
+                {{
+                  "modify": {{ ... }},
+                  "remove": [],
+                  "add_ignore": [],
+                }}
+                """
+                response_json = self.extractor.summary_extract(prompt)
+
+            try:
+                data = {}
+                if isinstance(response_json, str):
+                    clean_json = response_json.replace("```json", "").replace("```", "")
+                    s = clean_json.find("{")
+                    e = clean_json.rfind("}")
+                    if s != -1 and e != -1:
+                        clean_json = clean_json[s:e+1]
+                    data = json.loads(clean_json)
+                else:
+                    data = response_json
+                
+                if not source_map and not ignored_ids:
+                    # Cold Start Response Logic
+                    source_map = data.get("source_map", {})
+                    ignored_ids = set(int(x) for x in data.get("ignored_ids", []) if str(x).isdigit())
+                else:
+                    # Patch Response Logic
+                    mods = data.get("modify", {})
+                    removes = data.get("remove", [])
+                    new_ignores = data.get("add_ignore", [])
+                    
+                    for uid, text in mods.items():
+                        source_map[str(uid)] = text
+                        if int(uid) in ignored_ids:
+                            ignored_ids.remove(int(uid))
+                    
+                    for uid in removes:
+                        if str(uid) in source_map:
+                            del source_map[str(uid)]
+                            ignored_ids.add(int(uid))
+                    
+                    for uid in new_ignores:
+                        ignored_ids.add(int(uid))
+
+                # Check for skipped IDs from the batch and add them to ignored_ids safely
+                for update_str in batch:
+                    if update_str.startswith("ID "):
+                        try:
+                            sid_str = update_str.split(" ", 2)[1]
+                            sid = int(sid_str)
+                            # Check both int and str to be absolutely safe against inconsistent LLM format returns
+                            if str(sid) not in source_map and sid not in ignored_ids and str(sid) not in ignored_ids:
+                                ignored_ids.add(sid)
+                        except ValueError:
+                            pass
+
+            except Exception as e:
+                print(f"  [Parent] Error parsing LLM response for '{node.name}': {e}")
+                all_success = False
+                
+        if updates_batches:
             node.summary = json.dumps({
                 "source_map": source_map,
                 "ignored_ids": list(ignored_ids)
             })
-            
+            node.description = " ".join(source_map.values())
+            # Propagate mem_start / mem_end from children columns
+            child_starts = [c.mem_start for c in children if c.mem_start]
+            child_ends   = [c.mem_end   for c in children if c.mem_end]
+            if child_starts:
+                node.mem_start = min(child_starts)
+            if child_ends:
+                node.mem_end = max(child_ends)
+
+
+        if all_success:
             node.timestamp = datetime.now()
-            session.add(node)
-            print(f"  [Parent] Saved '{node.name}' (Map Size: {len(source_map)})")
-            
-        except Exception as e:
-            print(f"  [Parent] Error parsing LLM response for '{node.name}': {e}")
+        session.add(node)
+        print(f"  [Parent] Saved '{node.name}' (Map Size: {len(source_map)})")
+        
 
     def run(self):
         session = self.Session()
@@ -390,17 +397,8 @@ class RecursiveSummarizer:
                     self.process_leaf(session, node)
                 else:
                     self.process_parent(session, node)
-            session.commit()
+                session.commit()
         
         print("\n[Summarizer] Rollup Complete.")
         session.close()
-
-def main():
-    job = DatabaseManager()
-    job.run_decision_state_analyzer()
-    job = RecursiveSummarizer()
-    job.run()
-
-if __name__ == "__main__":
-    main()
 

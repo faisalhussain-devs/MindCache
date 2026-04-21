@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      background-color: #0b1115;
+    }
+
+    body {
+      width: 360px;
+      font-family: 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
+      background: radial-gradient(circle at top right, #103342, #0b1115 60%);
+      color: #e2e8f0;
+      padding: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMDMpIi8+Cjwvc3ZnPg==');
+      pointer-events: none;
+      opacity: 0.8;
+    }
+
+    /* ── Utilities ── */
+    .glass-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 12px;
+      padding: 12px;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    .text-glow {
+      text-shadow: 0 0 12px rgba(15, 111, 143, 0.5);
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      position: relative;
+      z-index: 1;
+    }
+
+    .header svg.logo {
+      width: 28px;
+      height: 28px;
+      fill: none;
+      stroke: #38bdf8;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.6));
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      flex: 1;
+      letter-spacing: 0.5px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      position: relative;
+      transition: all 300ms ease;
+    }
+
+    .status-dot.connected {
+      background: #3fb950;
+      box-shadow: 0 0 12px #3fb950, inset 0 0 4px rgba(255, 255, 255, 0.5);
+    }
+
+    .status-dot.disconnected {
+      background: #f85149;
+      box-shadow: 0 0 12px #f85149, inset 0 0 4px rgba(255, 255, 255, 0.5);
+    }
+
+    /* ── Stats grid ── */
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 16px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .stat-card {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 12px 8px;
+      text-align: center;
+      transition: all 250ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.15);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+    }
+
+    .stat-label {
+      font-size: 10px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+
+    /* ── Pipeline section ── */
+    .section {
+      margin-bottom: 16px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .section-title {
+      font-size: 10px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+
+    /* ── Buttons ── */
+    .btn-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 0 14px;
+      border: none;
+      border-radius: 8px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      transition: all 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #0ea5e9, #0284c7);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-primary::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.2) 0%, transparent 100%);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+      box-shadow: 0 6px 20px rgba(2, 132, 199, 0.4);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      filter: grayscale(1);
+    }
+
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.05);
+      color: #e2e8f0;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      flex: 0 0 42px;
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* ── Auto mode toggle ── */
+    .auto-toggle {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: linear-gradient(90deg, rgba(14, 165, 233, 0.05) 0%, transparent 100%);
+      border: 1px solid rgba(14, 165, 233, 0.15);
+      cursor: pointer;
+      transition: all 200ms ease;
+    }
+
+    .auto-toggle:hover {
+      border-color: rgba(14, 165, 233, 0.3);
+    }
+
+    .auto-toggle input[type="checkbox"] {
+      display: none;
+    }
+
+    .toggle-track {
+      width: 40px;
+      height: 22px;
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.1);
+      position: relative;
+      flex-shrink: 0;
+      transition: background 250ms ease;
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .toggle-track::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #cbd5e1;
+      transition: all 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .auto-toggle input:checked+.toggle-track {
+      background: #0ea5e9;
+    }
+
+    .auto-toggle input:checked+.toggle-track::after {
+      left: 21px;
+      background: #fff;
+    }
+
+    .auto-label {
+      flex: 1;
+    }
+
+    .auto-label strong {
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .auto-label span {
+      color: #94a3b8;
+      font-size: 10px;
+    }
+
+    .auto-counter {
+      font-size: 10px;
+      color: #0ea5e9;
+      margin-top: 6px;
+      padding-left: 52px;
+      font-weight: 500;
+    }
+
+    /* ── Pipeline status ── */
+    .pipeline-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .pipeline-status.is-running {
+      color: #38bdf8;
+    }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(56, 189, 248, 0.2);
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 800ms linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* ── Links ── */
+    .links {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .link-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 36px;
+      padding: 0 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #cbd5e1;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 200ms ease;
+    }
+
+    .link-btn svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+    }
+
+    .link-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.15);
+      transform: translateY(-1px);
+    }
+
+    .link-btn.full-width {
+      grid-column: 1 / -1;
+    }
+
+    /* ── Session info ── */
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .info-row .value {
+      color: #e2e8f0;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 10px;
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 10px;
+      color: #64748b;
+      text-align: center;
+      letter-spacing: 0.5px;
+      position: relative;
+      z-index: 1;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <svg class="logo" viewBox="0 0 24 24">
+      <circle cx="18" cy="5" r="3"></circle>
+      <circle cx="6" cy="12" r="3"></circle>
+      <circle cx="18" cy="19" r="3"></circle>
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+    </svg>
+    <h1 class="text-glow">MindCache</h1>
+    <div id="statusDot" class="status-dot disconnected"></div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card glass-card">
+      <div class="stat-label">Triads</div>
+      <div class="stat-value" id="triadCount">—</div>
+    </div>
+    <div class="stat-card glass-card">
+      <div class="stat-label">Queue</div>
+      <div class="stat-value" id="queueCount">—</div>
+    </div>
+    <div class="stat-card glass-card">
+      <div class="stat-label">History</div>
+      <div class="stat-value" id="historyCount">—</div>
+    </div>
+  </div>
+
+  <!-- Pipeline -->
+  <div class="section glass-card">
+    <div class="section-title">Pipeline Monitor</div>
+    <div class="btn-row">
+      <button id="runPipelineBtn" class="btn btn-primary">▶ Run Full Pipeline</button>
+      <button id="refreshBtn" class="btn btn-ghost" title="Refresh status">↻</button>
+    </div>
+    <div id="pipelineStatus" class="pipeline-status"></div>
+
+    <label class="auto-toggle" id="autoToggle">
+      <input type="checkbox" id="autoCheckbox">
+      <div class="toggle-track"></div>
+      <div class="auto-label">
+        <strong>Auto Scheduler</strong>
+        <span>Tier 1 at ≥3 pending, Tier 2 at ≥30 new</span>
+      </div>
+    </label>
+    <div id="autoCounter" class="auto-counter"></div>
+  </div>
+
+  <!-- Links -->
+  <div class="links">
+    <button id="linkDashboard" class="link-btn">
+      <svg viewBox="0 0 24 24">
+        <path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z" />
+      </svg>
+      Dashboard
+    </button>
+    <button id="linkExplorer" class="link-btn">
+      <svg viewBox="0 0 24 24">
+        <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+      </svg>
+      Explorer
+    </button>
+    <button id="linkGraph" class="link-btn full-width">
+      <svg viewBox="0 0 24 24">
+        <circle cx="18" cy="5" r="3"></circle>
+        <circle cx="6" cy="12" r="3"></circle>
+        <circle cx="18" cy="19" r="3"></circle>
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+      </svg>
+      Graph View
+    </button>
+  </div>
+
+  <!-- Session -->
+  <div class="section glass-card" style="margin-bottom: 0;">
+    <div class="section-title">Session State</div>
+    <div class="info-row">
+      <span>Active Session</span>
+      <span class="value" id="sessionId">—</span>
+    </div>
+    <div class="info-row">
+      <span>Last Capture</span>
+      <span class="value" id="lastCapture">—</span>
+    </div>
+  </div>
+
+  <div class="footer">MindCache v0.3.0</div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

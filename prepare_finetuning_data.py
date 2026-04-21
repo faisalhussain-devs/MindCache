@@ -110,7 +110,7 @@ def extract_conversations(filepath, output_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract linear conversation threads from ChatGPT export.")
-    parser.add_argument("--input", default=r"e:\MindCache\LLM_CHATS\GPT\27daf61bbfa0cb23b81db1fe3ed4c7a3\conversations.json")
+    parser.add_argument("--input", default=r"E:\MindCache\LLM_CHATS\conversations.json")
     parser.add_argument("--output", default=r"e:\MindCache\finetuning_dataset.json")
     
     args = parser.parse_args()

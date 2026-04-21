@@ -5,10 +5,11 @@ class Summary_Extractor():
         self.sys_prompt = sys_prompt
 
     def summary_extract(self, prompt):
-        self.llm = SafeAI()
-        raw_json = self.llm.generate(
+        llm = SafeAI()
+        raw_json = llm.generate(
             prompt=prompt,
-            system_prompt=self.sys_prompt
+            system_prompt=self.sys_prompt,
+            retries=44
         )
         if not raw_json:
             return None

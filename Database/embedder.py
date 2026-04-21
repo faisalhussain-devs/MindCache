@@ -48,6 +48,7 @@ def run_embedding_job():
             Topic.embedding == None,
         ).all()
         
+        
         total_topics = len(topics)
         print(f"Found {total_topics} topics needing vectors.")
 
