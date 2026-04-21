@@ -9,7 +9,6 @@ venv/
 *.gguf
 *.bin
 *.json
-*.html
 *.wav
 *.png
 *.jpg
@@ -18,3 +17,7 @@ LLM_CHATS/
 
 # database
 .db
+
+# Generated retrieval cache (binary, re-built by background scheduler)
+cache/
+*.pkl
