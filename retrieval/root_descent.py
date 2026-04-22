@@ -3,7 +3,7 @@ from Database.db_setup import Topic, engine
 from api_server import get_tree_cache
 from retrieval.context_bridge import ContextBridge
 from retrieval.structs import CandidateTopic, RetrievalConfig, RetrievalContext
-from retrieval.hybrid_search import BM25Scorer, calculate_rrf, CrossEncoderReranker
+from retrieval.hybrid_search import BM25Scorer, calculate_rrf, CrossEncoderManager
 from retrieval.root_cache import root_leaf_cache
 from sqlalchemy.orm import sessionmaker
 
@@ -16,7 +16,7 @@ class RootDescent:
         self.config = config
         self.bridge = context_bridge
         self.Session = sessionmaker(bind=engine)
-        self.reranker = CrossEncoderReranker()
+        self.reranker = CrossEncoderManager()
 
     def descend(self, ctx: RetrievalContext) -> list[CandidateTopic]:
         if not ctx.sub_queries:

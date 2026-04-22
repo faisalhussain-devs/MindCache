@@ -1,33 +1,49 @@
 import numpy as np
 from sqlalchemy.orm import sessionmaker
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from Database.db_setup import engine, Topic
 
-MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B" 
+MODEL_NAME = "BAAI/bge-base-en-v1.5" 
 MEM_BATCH_SIZE = 24  # Process 32 items at a time to be fast but safe
 SUMM_BATCH_SIZE = 8
 
+
 class EmbeddingManager:
-    def __init__(self):
-        print(f"Loading Embedding Model: {MODEL_NAME}...")
-        self.model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
-        self.model.max_seq_length = 2048
-        print(" Model Loaded.")
+    def __init__(self, dim=512):
+        print(f"Loading FastEmbed ONNX Model: {MODEL_NAME}...")
+        self.dim = dim
+        self.model = TextEmbedding(model_name=MODEL_NAME)
+        print(" Embedding Model Loaded (ONNX Native)")
+
+    def encode(self, texts, is_query=False):
+        if isinstance(texts, str):
+            texts = [texts]
+
+        # BGE requires instruction ONLY for queries
+        if is_query:
+            instruction = "Represent this sentence for searching relevant passages: "
+            texts = [instruction + t for t in texts]
+
+        # FastEmbed handles tokenization and pooling under the hood efficiently
+        embeddings = list(self.model.embed(texts))
+        
+        # Convert to a stable numpy matrix to slice dims
+        embeddings_matrix = np.array(embeddings)
+        
+        # Slice for Matryoshka dimension reduction
+        embeddings_matrix = embeddings_matrix[:, :self.dim]
+        
+        # Re-normalize mathematically via NumPy after slicing
+        norms = np.linalg.norm(embeddings_matrix, axis=1, keepdims=True)
+        embeddings_matrix = embeddings_matrix / np.where(norms == 0, 1e-10, norms)
+
+        return embeddings_matrix
 
     def get_batch_embeddings(self, text_list):
         """Generates vectors for a list of strings."""
         if not text_list:
             return None
-        
-        # Specific prompt for Retrieval tasks (adjust if Qwen docs say otherwise)
-        instruction = "Instruct: Represent this text for retrieval so it can be retreived accurately"
-        
-        embeddings = self.model.encode(
-            text_list,
-            prompt=instruction,
-            normalize_embeddings=True, # Crucial for Cosine Similarity
-            show_progress_bar=False
-        )
+        embeddings = self.encode(text_list)
         return embeddings
     
     def _to_blob(self, vector):
@@ -45,7 +61,7 @@ def run_embedding_job():
     try:
         topics = session.query(Topic).filter(
             Topic.description != None, 
-            Topic.embedding == None,
+            #Topic.embedding == None,
         ).all()
         
         

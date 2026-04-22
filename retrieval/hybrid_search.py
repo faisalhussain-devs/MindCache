@@ -62,17 +62,21 @@ def calculate_rrf(vector_rank: int, bm25_rank: int, k: int = 60) -> float:
     b_score = 1.0 / (k + bm25_rank) if bm25_rank > 0 else 0.0
     return v_score + b_score
 
-class CrossEncoderReranker:
-    """
-    Reranks candidates directly comparing the user_query against the candidate description.
-    """
-    def __init__(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2'):
+RERANKER_NAME = "jinaai/jina-reranker-v1-turbo-en"
+
+class CrossEncoderManager:
+    def __init__(self):
+        print(f"Loading FastEmbed ONNX Reranker: {RERANKER_NAME}...")
         try:
-            from sentence_transformers import CrossEncoder
-            self.model = CrossEncoder(model_name, max_length=512)
+            from fastembed.rerank.cross_encoder import TextCrossEncoder
+            self.model = TextCrossEncoder(model_name=RERANKER_NAME)
+            print(" Reranker Loaded (ONNX Native)")
             self.enabled = True
         except ImportError:
-            print("[CrossEncoder] sentence-transformers not installed. Reranking disabled.")
+            print("[CrossEncoder] fastembed not installed. Reranking disabled.")
+            self.enabled = False
+        except Exception as e:
+            print(f"[CrossEncoder] FastEmbed load failed: {e}")
             self.enabled = False
 
     def rerank(self, candidates: list[dict], top_k: int) -> list[dict]:
@@ -84,19 +88,24 @@ class CrossEncoderReranker:
         if not self.enabled or not candidates:
             return candidates[:top_k]
 
-        # Cross encoder requires pairs of (query, document)
-        pairs = [[c.get("best_sub_query", ""), c.get("searchable_text", "")] for c in candidates]
-        
-        try:
-            scores = self.model.predict(pairs)
-            for idx, score in enumerate(scores):
-                candidates[idx]["cross_encoder_score"] = float(score)
+        query_groups: dict[str, list[int]] = {}
+        for idx, c in enumerate(candidates):
+            q = c.get("best_sub_query", "")
+            if q not in query_groups:
+                query_groups[q] = []
+            query_groups[q].append(idx)
 
-            # Sort descending by cross-encoder score
-            candidates.sort(key=lambda x: x.get("cross_encoder_score", 0.0), reverse=True)
-            return candidates[:top_k]
-            
-        except Exception as e:
-            print(f"[CrossEncoder] Reranking failed: {e}")
-            return candidates[:top_k]
+        for query, indices in query_groups.items():
+            docs = [candidates[i].get("searchable_text", "") for i in indices]
+            # FastEmbed rerank() returns floats in the SAME ORDER as input docs
+            scores = list(self.model.rerank(query, documents=docs))
+            for rank_idx, global_idx in enumerate(indices):
+                candidates[global_idx]["cross_encoder_score"] = float(scores[rank_idx])
 
+        # Fallback: any candidates that didn't get scored (shouldn't happen)
+        for c in candidates:
+            if "cross_encoder_score" not in c:
+                c["cross_encoder_score"] = float(c.get("rrf_score", 0.0))
+
+        candidates.sort(key=lambda x: x["cross_encoder_score"], reverse=True)
+        return candidates[:top_k]

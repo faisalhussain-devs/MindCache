@@ -1,4 +1,3 @@
-import json
 from Database.db_manager import DatabaseManager
 from Database.db_setup import Topic
 from retrieval.context_bridge import ContextBridge
