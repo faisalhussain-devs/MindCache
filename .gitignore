@@ -11,6 +11,7 @@ venv/
 *.json
 *.wav
 *.png
+.model_cache/
 *.jpg
 models/
 LLM_CHATS/
