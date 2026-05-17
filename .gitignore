@@ -24,3 +24,24 @@ hf_cache/
 # Generated retrieval cache (binary, re-built by background scheduler)
 cache/
 *.pkl
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# WAL/shm
+*.db-wal
+*.db-shm
+
+# Data files
+*.parquet
+
+# Chat exports
+LLM_CHATS/
+
+# Recovery/backups
+recovery_backups/
+useless/
+
+# Retrieval cache
+retrieval/cache/
