@@ -46,3 +46,5 @@ useless/
 # Retrieval cache
 retrieval/cache/
 BEAM/1M-00000-of-00001.parquet
+
+config/keys.txt
