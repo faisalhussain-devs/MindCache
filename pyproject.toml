@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Antigravity Devs"}
+    {name = "Faisal Hussain", email = "faisalhussain17122003@gmail.com"}
 ]
 dependencies = [
     "sqlalchemy>=2.0.0",
@@ -34,5 +34,5 @@ optimize = [
 ]
 
 [tool.setuptools]
-packages = ["Database", "Memory_extract", "retrieval"]
+packages = ["mindcache", "mindcache.Database", "mindcache.Memory_extract", "mindcache.retrieval"]
 package-dir = { "" = "." }
