@@ -48,48 +48,112 @@ print(context)
 
 Most memory systems treat long-term memories as a flat pool of unstructured embedding vectors. MindCache introduces a structured, self-organizing memory architecture optimized for reasoning agents.
 
-```mermaid
-graph TD
-    %% Styling
-    classDef default fill:#1e1e2e,stroke:#313244,stroke-width:1px,color:#cdd6f4;
-    classDef process fill:#89b4fa,stroke:#1e1e2e,color:#11111b,stroke-width:1px;
-    classDef storage fill:#a6e3a1,stroke:#1e1e2e,color:#11111b,stroke-width:1px;
-    classDef retrieval fill:#f9e2af,stroke:#1e1e2e,color:#11111b,stroke-width:1px;
-    classDef analyzer fill:#f38ba8,stroke:#1e1e2e,color:#11111b,stroke-width:1px;
+### 🔹 Phase 1 — Ingestion Pipeline
 
-    %% Nodes
-    A[Raw Conversation Turns] -->|add| B(Processing Queue / Buffer)
-    B -->|process_queue| C{LLM Extraction Pipeline}
-    
-    subgraph "Structured Ingestion"
-        C --> D1[Episodic Memory]:::storage
-        C --> D2[Knowledge Memory]:::storage
-        C --> D3[User Memory]:::storage
-        C --> D4[Decision Memory]:::storage
-        
-        D4 <-->|Validates States| E(Decision State Analyzer):::analyzer
-    end
-    
-    D1 & D2 & D3 & D4 --> F[Dynamic Topic Tree Hierarchy]:::process
-    F -->|Reorganize: Splits & Merges| F
-    F -->|Incremental Delta Summarization| G[(Parent Rollup Summaries)]:::storage
-    
-    subgraph "5-Phase Hybrid Retrieval Engine"
-        H[Query] --> I{Query Classifier}
-        I -->|Fact Query| J1[Partitioned RRF: Vector + BM25]:::retrieval
-        I -->|Broad Query| J2[Summaries + Partitioned RRF]:::retrieval
-        
-        K[BM25 Morphological Aliasing] -.->|Union-Find Equivalences| J1 & J2
-        
-        J1 & J2 --> L[Cross-Encoder Reranking]:::retrieval
-        L --> M[Decision-Anchored BM25 Expansion]:::retrieval
-        M --> N[Context Directive Injection]:::retrieval
-    end
-    
-    F -.->|Search Candidate Pool| J1
-    G -.->|Summary Candidate Pool| J2
-    N --> O[Final Context to LLM Prompt]
+> Raw conversations are queued, embedded, and processed by an LLM extraction pipeline. Each memory atom is classified into one of four typed stores and routed to a topic node in the hierarchy.
+
+```mermaid
+flowchart LR
+    classDef queue    fill:#313244,color:#cdd6f4,stroke:#585b70
+    classDef llm      fill:#cba6f7,color:#11111b,stroke:#11111b
+    classDef episodic fill:#89dceb,color:#11111b,stroke:#11111b
+    classDef know     fill:#a6e3a1,color:#11111b,stroke:#11111b
+    classDef user     fill:#89b4fa,color:#11111b,stroke:#11111b
+    classDef decision fill:#f9e2af,color:#11111b,stroke:#11111b
+    classDef analyzer fill:#f38ba8,color:#11111b,stroke:#11111b
+    classDef tree     fill:#cba6f7,color:#11111b,stroke:#11111b,stroke-dasharray:4 2
+
+    A["💬 Raw Conversation Turns\n(list of messages)"]:::queue
+    B["📥 Processing Queue\n(Non-blocking buffer)"]:::queue
+    C["🤖 LLM Extraction Pipeline\n+ Embedding Encoder\n+ Smart Grounded Routing"]:::llm
+
+    D1["📝 Episodic\n(Events & sessions)"]:::episodic
+    D2["🧠 Knowledge\n(Facts & concepts)"]:::know
+    D3["👤 User Memory\n(Preferences & identity)"]:::user
+    D4["⚖️ Decision Memory\n(Choices & directives)"]:::decision
+    E["🔍 Decision State Analyzer\nActive / Superseded /\nConditional / Rejected"]:::analyzer
+
+    F["🌲 Dynamic Topic Tree\n(Hierarchical ontology)"]:::tree
+
+    A -- mc.add --> B
+    B -- mc.process_queue --> C
+    C --> D1 & D2 & D3 & D4
+    D4 <--> E
+    D1 & D2 & D3 & D4 --> F
 ```
+
+---
+
+### 🔹 Phase 2 — Dynamic Tree Lifecycle
+
+> The topic tree is never static. Every N memories, a background process reorganizes the tree by splitting overloaded nodes, merging sparse siblings, and building incremental rollup summaries for broad queries.
+
+```mermaid
+flowchart LR
+    classDef tree     fill:#cba6f7,color:#11111b,stroke:#11111b
+    classDef reorg    fill:#f9e2af,color:#11111b,stroke:#11111b
+    classDef summary  fill:#a6e3a1,color:#11111b,stroke:#11111b
+    classDef trigger  fill:#313244,color:#cdd6f4,stroke:#585b70
+
+    T["🌲 Dynamic Topic Tree\n(Hierarchical ontology)"]:::tree
+
+    R1["✂️ Split overloaded leaf nodes\n(too broad / too many memories)"]:::reorg
+    R2["🔗 Merge sparse sibling nodes\n(semantic overlap detected)"]:::reorg
+    R3["⬆️ Promote / Demote\n(depth optimization)"]:::reorg
+
+    S["📜 Incremental Delta Summaries\n(bottom-up rollup, LLM processes\nonly new memories, not full history)"]:::summary
+
+    TH["⏱️ Threshold Trigger\n(every 60 processed jobs)"]:::trigger
+
+    TH --> T
+    T --> R1 & R2 & R3
+    R1 & R2 & R3 --> T
+    T -- "New leaf memories" --> S
+    S -- "Summary stored at parent node" --> T
+```
+
+---
+
+### 🔹 Phase 3 — 5-Phase Hybrid Retrieval Engine
+
+> Every search query goes through five sequential phases: per-type partitioned fusion search, query-adaptive classification (fact vs broad), cross-encoder reranking, decision anchor expansion, and directive-aware context assembly.
+
+```mermaid
+flowchart LR
+    classDef query    fill:#313244,color:#cdd6f4,stroke:#585b70
+    classDef classify fill:#cba6f7,color:#11111b,stroke:#11111b
+    classDef search   fill:#89b4fa,color:#11111b,stroke:#11111b
+    classDef rerank   fill:#f9e2af,color:#11111b,stroke:#11111b
+    classDef anchor   fill:#f38ba8,color:#11111b,stroke:#11111b
+    classDef output   fill:#a6e3a1,color:#11111b,stroke:#11111b
+
+    Q["🔎 Incoming Query"]:::query
+
+    CL["🏷️ Phase 2 — Query Classifier\nFact Query vs Broad Overview Query"]:::classify
+
+    P1["📊 Phase 1 — Partitioned RRF\nBM25 ＋ Vector search per type\n(Episodic / Knowledge / User / Decision)\nMorphological Aliasing via Union-Find"]:::search
+
+    P1B["📜 Summaries included\n(broad queries only — no keywords,\nBM25/vectors fail, summaries shine)"]:::search
+
+    P3["🎯 Phase 3 — Cross-Encoder Reranking\n(Jina reranker rescores merged pool)"]:::rerank
+
+    P4["⚖️ Phase 4 — Decision Anchor Expansion\n(Top decisions become secondary\nBM25 queries, fan out to\nrelated episodic & knowledge)"]:::anchor
+
+    P5["📋 Phase 5 — Directive Injection\n(User Profile / Abstention /\nRecency Conflict Resolution)"]:::rerank
+
+    OUT["📤 Final Context → LLM Prompt"]:::output
+
+    Q --> CL
+    CL -- "Fact query" --> P1
+    CL -- "Broad query" --> P1 & P1B
+    P1 & P1B --> P3
+    P3 --> P4
+    P4 --> P5
+    P5 --> OUT
+```
+
+---
+
 
 ### 1. Four Structured Memory Types
 Rather than storing generic chunks, MindCache segregates information into semantic types:
