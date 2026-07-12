@@ -232,7 +232,7 @@ class MindCache:
                 )
                 from mindcache.Database.reorganize_tree import reorganize_tree
                 try:
-                    reorganize_tree(dry_run=False)
+                    reorganize_tree(user_id=user_id, dry_run=False)
                 except Exception as reorg_err:
                     logger.warning(f"[MindCache Warning] Tree reorganisation failed: {reorg_err}")
 

@@ -27,8 +27,8 @@ class RecursiveSummarizer:
                 lines.append(content)  # Already has [Decision:status] prefix
         return "\n".join(lines)
 
-    def get_max_depth(self, session):
-        result = session.query(func.max(Topic.level)).scalar()
+    def get_max_depth(self, session, user_id="default"):
+        result = session.query(func.max(Topic.level)).filter(Topic.user_id == user_id).scalar()
         return result or 0
 
     def get_leaf_summary(self, session, topic_id, min_timestamp=0):
@@ -184,13 +184,13 @@ class RecursiveSummarizer:
             return self._build_search_text(existing_summary)
         return None
     
-    def process_leaves_batched(self, session, leaf_nodes):
+    def process_leaves_batched(self, session, leaf_nodes, user_id="default"):
         logger.info(f"\n--- Checking {len(leaf_nodes)} Leaf Nodes for Updates ---")
         
         # Precompute counts
         counts = {}
         for model in [EpisodicMemory, UserMemory, KnowledgeMemory, DecisionMemory]:
-            res = session.query(model.topic_id, func.count(model.id)).group_by(model.topic_id).all()
+            res = session.query(model.topic_id, func.count(model.id)).filter(model.user_id == user_id).group_by(model.topic_id).all()
             for topic_id, count in res:
                 if topic_id is not None:
                     counts[topic_id] = counts.get(topic_id, 0) + count
@@ -528,7 +528,7 @@ class RecursiveSummarizer:
         all_success = True
 
         if max_depth is None:
-            max_depth = self.get_max_depth(session)
+            max_depth = self.get_max_depth(session, user_id=user_id)
 
         if max_depth > 0:
             relative_depth = node.level / max_depth  # 0.0 = root, 1.0 = deepest parent
@@ -711,7 +711,7 @@ Output JSON patch only (omit unchanged entries entirely):
         # 1. Process all leaf nodes first using batched summarization
         all_topics = session.query(Topic).filter(Topic.user_id == user_id).all()
         leaf_nodes = [node for node in all_topics if not node.children]
-        self.process_leaves_batched(session, leaf_nodes)
+        self.process_leaves_batched(session, leaf_nodes, user_id=user_id)
 
         # 2. Process parent nodes in bottom-up level-by-level order
         for current_level in range(max_depth, -1, -1):

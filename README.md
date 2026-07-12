@@ -65,7 +65,7 @@ flowchart LR
 
     A["💬 Raw Conversation Turns\n(list of messages)"]:::queue
     B["📥 Processing Queue\n(Non-blocking buffer)"]:::queue
-    C["🤖 LLM Extraction Pipeline\n+ Embedding Encoder\n+ Smart Grounded Routing"]:::llm
+    C["🤖 LLM Extraction Pipeline\n+ Embedding Encoder\n+ Grounded Routing Constraints"]:::llm
 
     D1["📝 Episodic\n(Events & sessions)"]:::episodic
     D2["🧠 Knowledge\n(Facts & concepts)"]:::know
@@ -80,6 +80,7 @@ flowchart LR
     C --> D1 & D2 & D3 & D4
     D4 <--> E
     D1 & D2 & D3 & D4 --> F
+    F -.->|"Grounded Routing Constraints\n(prevents duplicate paths)"| C
 ```
 
 ---
@@ -100,14 +101,15 @@ flowchart LR
     R1["✂️ Split overloaded leaf nodes\n(too broad / too many memories)"]:::reorg
     R2["🔗 Merge sparse sibling nodes\n(semantic overlap detected)"]:::reorg
     R3["⬆️ Promote / Demote\n(depth optimization)"]:::reorg
+    R4["🌐 Leiden Partitioning\n(Local community grooming & scaling)"]:::reorg
 
     S["📜 Incremental Delta Summaries\n(bottom-up rollup, LLM processes\nonly new memories, not full history)"]:::summary
 
     TH["⏱️ Threshold Trigger\n(every 60 processed jobs)"]:::trigger
 
     TH --> T
-    T --> R1 & R2 & R3
-    R1 & R2 & R3 --> T
+    T --> R1 & R2 & R3 & R4
+    R1 & R2 & R3 & R4 --> T
     T -- "New leaf memories" --> S
     S -- "Summary stored at parent node" --> T
 ```
@@ -116,7 +118,7 @@ flowchart LR
 
 ### 🔹 Phase 3 — 5-Phase Hybrid Retrieval Engine
 
-> Every search query goes through five sequential phases: per-type partitioned fusion search, query-adaptive classification (fact vs broad), cross-encoder reranking, decision anchor expansion, and directive-aware context assembly.
+> Every search query goes through five sequential phases: query-adaptive classification (fact vs broad), per-type partitioned fusion search, cross-encoder reranking, decision anchor expansion, and directive-aware context assembly.
 
 ```mermaid
 flowchart LR
@@ -129,17 +131,17 @@ flowchart LR
 
     Q["🔎 Incoming Query"]:::query
 
-    CL["🏷️ Phase 2 — Query Classifier\nFact Query vs Broad Overview Query"]:::classify
+    CL["🏷️ Phase 1 — Adaptive Query Classifier\nFact vs Broad / Temporal vs Non-temporal"]:::classify
 
-    P1["📊 Phase 1 — Partitioned RRF\nBM25 ＋ Vector search per type\n(Episodic / Knowledge / User / Decision)\nMorphological Aliasing via Union-Find"]:::search
+    P1["📊 Phase 2 — Partitioned Hybrid Search & RRF\nBM25 ＋ Vector search per type\n(Episodic / Knowledge / User / Decision)\nMorphological Aliasing via Union-Find"]:::search
 
-    P1B["📜 Summaries included\n(broad queries only — no keywords,\nBM25/vectors fail, summaries shine)"]:::search
+    P1B["📜 Phase 2B — Hierarchical Summaries\n(Traversed for Broad Queries\nwhen keywords / similarity fail)"]:::search
 
-    P3["🎯 Phase 3 — Cross-Encoder Reranking\n(Jina reranker rescores merged pool)"]:::rerank
+    P3["🎯 Phase 3 — Unified Cross-Encoder Reranking\n(Jina reranker rescores merged pool)"]:::rerank
 
-    P4["⚖️ Phase 4 — Decision Anchor Expansion\n(Top decisions become secondary\nBM25 queries, fan out to\nrelated episodic & knowledge)"]:::anchor
+    P4["⚖️ Phase 4 — Decision-Anchored BM25 Expansion\n(Top decisions become secondary BM25 queries,\nretrieve related episodic & knowledge)"]:::anchor
 
-    P5["📋 Phase 5 — Directive Injection\n(User Profile / Abstention /\nRecency Conflict Resolution)"]:::rerank
+    P5["📋 Phase 5 — Directive Injection & Context Assembly\n(Abstention, Recency, Profile directives)")"]:::rerank
 
     OUT["📤 Final Context → LLM Prompt"]:::output
 

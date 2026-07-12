@@ -39,12 +39,12 @@ def normalize_topic_name(name: str) -> str:
     return n
 
 
-def _precompute_memory_counts(session):
+def _precompute_memory_counts(session, user_id="default"):
     """Executes 4 fast SQL queries to count memories group-by topic_id."""
     from sqlalchemy import func
     counts = defaultdict(int)
     for model in [EpisodicMemory, UserMemory, KnowledgeMemory, DecisionMemory]:
-        res = session.query(model.topic_id, func.count(model.id)).group_by(model.topic_id).all()
+        res = session.query(model.topic_id, func.count(model.id)).filter(model.user_id == user_id).group_by(model.topic_id).all()
         for topic_id, count in res:
             if topic_id is not None:
                 counts[topic_id] += count
@@ -232,12 +232,12 @@ def transfer_topic_metadata(source_node, target_node):
     return summary_changed or description_changed
 
 
-def enforce_leaf_constraint(session, successfully_mapped_nodes=None, counts=None):
+def enforce_leaf_constraint(session, user_id="default", successfully_mapped_nodes=None, counts=None):
     if counts is None:
-        counts = _precompute_memory_counts(session)
+        counts = _precompute_memory_counts(session, user_id=user_id)
     session.expire_all()
     leaf_enforcement_count = 0
-    for node in list(session.query(Topic).all()):
+    for node in list(session.query(Topic).filter(Topic.user_id == user_id).all()):
         has_memories = counts.get(node.id, 0) > 0
         
         # If it has children AND holds memories, we must split it
@@ -249,7 +249,8 @@ def enforce_leaf_constraint(session, successfully_mapped_nodes=None, counts=None
                     name=original_name,
                     level=node.level,
                     parent=node.parent,
-                    timestamp=node.timestamp
+                    timestamp=node.timestamp,
+                    user_id=user_id
                 )
                 session.add(new_parent)
                 logger.info(f"  LEAF-ENFORCEMENT: Split '{original_name}' (ID {node.id}). Created new parent.")
@@ -269,7 +270,8 @@ def enforce_leaf_constraint(session, successfully_mapped_nodes=None, counts=None
                         name=original_name.removeprefix("General "),
                         level=level,
                         parent=None,
-                        timestamp=node.timestamp
+                        timestamp=node.timestamp,
+                        user_id=user_id
                     )
                     session.add(parent)
                 for child in list(node.children):
@@ -287,10 +289,10 @@ def enforce_leaf_constraint(session, successfully_mapped_nodes=None, counts=None
     return leaf_enforcement_count
 
 
-def apply_mapping(session, ai, prompt, system_prompt, target_node_ids, children_map=None, node_map=None, raw_json=None):
+def apply_mapping(session, user_id="default", ai=None, prompt=None, system_prompt=None, target_node_ids=None, children_map=None, node_map=None, raw_json=None):
     # Rebuild maps if not provided, to ensure fresh and consistent state across batches
     if node_map is None:
-        node_map = {t.id: t for t in session.query(Topic).all()}
+        node_map = {t.id: t for t in session.query(Topic).filter(Topic.user_id == user_id).all()}
     if children_map is None:
         children_map = defaultdict(list)
         for t in node_map.values():
@@ -345,7 +347,7 @@ def apply_mapping(session, ai, prompt, system_prompt, target_node_ids, children_
                     if clean_name.islower() or clean_name.isupper():
                         clean_name = clean_name.title()
                     
-                    new_topic = Topic(name=clean_name, level=0)
+                    new_topic = Topic(name=clean_name, level=0, user_id=user_id)
                     session.add(new_topic)
                     session.flush()
                     new_parents_db[val_key] = new_topic
@@ -508,16 +510,16 @@ def apply_mapping(session, ai, prompt, system_prompt, target_node_ids, children_
     session.flush()
 
     # 4. Enforce Leaf Node Constraint for Memories
-    leaf_splits = enforce_leaf_constraint(session, successfully_mapped_nodes)
+    leaf_splits = enforce_leaf_constraint(session, user_id=user_id, successfully_mapped_nodes=successfully_mapped_nodes)
     if leaf_splits > 0:
         any_changes = True
 
     # 5. Sibling Dedup: merge same-name children under the same parent BEFORE empty node cleanup
     session.expire_all()
-    counts_sibling = _precompute_memory_counts(session)
+    counts_sibling = _precompute_memory_counts(session, user_id=user_id)
 
     # Rebuild node_map and children_map to include all step 2 and step 3 parent-child moves
-    node_map = {t.id: t for t in session.query(Topic).all()}
+    node_map = {t.id: t for t in session.query(Topic).filter(Topic.user_id == user_id).all()}
     children_map = defaultdict(list)
     for t in node_map.values():
         children_map[t.parent_id].append(t)
@@ -571,7 +573,7 @@ def apply_mapping(session, ai, prompt, system_prompt, target_node_ids, children_
     counts_cleanup = _precompute_memory_counts(session)
     
     # Rebuild node_map and children_map to include leaf enforcement changes
-    node_map = {t.id: t for t in session.query(Topic).all()}
+    node_map = {t.id: t for t in session.query(Topic).filter(Topic.user_id == user_id).all()}
     children_map = defaultdict(list)
     for t in node_map.values():
         children_map[t.parent_id].append(t)
@@ -618,7 +620,7 @@ def apply_mapping(session, ai, prompt, system_prompt, target_node_ids, children_
 
     # 9. Recalculate Levels (BFS from roots) after final structural cleanup.
     # Rebuild maps once to ensure absolute correctness of parent/child levels
-    node_map = {t.id: t for t in session.query(Topic).all()}
+    node_map = {t.id: t for t in session.query(Topic).filter(Topic.user_id == user_id).all()}
     children_map = defaultdict(list)
     for t in node_map.values():
         children_map[t.parent_id].append(t)
@@ -640,7 +642,7 @@ def apply_mapping(session, ai, prompt, system_prompt, target_node_ids, children_
     logger.info("  Mapping applied and committed.")
     return successfully_mapped_nodes, any_changes
 
-def pass_global_bootstrap(session, full_tree_text, children_map=None, node_map=None):
+def pass_global_bootstrap(session, user_id="default", full_tree_text="", children_map=None, node_map=None):
     logger.info(" PHASE 1: GLOBAL BOOTSTRAP (SMALL DB)")
     ai = SafeAI()
 
@@ -751,7 +753,7 @@ ALL NODES:
 """
     # Issue 5 fix: derive target_nodes from node_map for guaranteed consistency
     target_node_ids = [v.id for v in node_map.values() if v is not None]
-    return apply_mapping(session, ai, prompt, system_prompt, target_node_ids, children_map=children_map, node_map=node_map)
+    return apply_mapping(session, user_id, ai, prompt, system_prompt, target_node_ids, children_map=children_map, node_map=node_map)
 
 REORG_PROMPT_TEMPLATE = """\
 You are an expert knowledge architect. A subset of the knowledge tree is shown below.
@@ -1066,14 +1068,14 @@ PROBLEM ROOTS:
     return batch_idx, raw_json, batch_node_ids
 
 
-def kmeans_dedup_pass(session, children_map, node_map, mem_count_map):
+def kmeans_dedup_pass(session, user_id="default", children_map=None, node_map=None, mem_count_map=None):
     logger.info("\n PHASE 2: FLAT K-MEANS DEDUP (LARGE DB)")
     ai = SafeAI()
     embedder = EmbeddingManager()
     from mindcache.Database.db_manager import DatabaseManager
 
     # 1. Gather all leaves
-    topics = session.query(Topic).all()
+    topics = session.query(Topic).filter(Topic.user_id == user_id).all()
     leaves = [t for t in topics if len(children_map.get(t.id, [])) == 0]
 
     if len(leaves) < 2:
@@ -1201,18 +1203,18 @@ def kmeans_dedup_pass(session, children_map, node_map, mem_count_map):
     for f in futures:
         idx, raw_json, batch_node_ids = f.result()
         logger.info(f"\n  Applying LLM Batch {idx+1}/{len(batches)} mapping...")
-        _, batch_changed = apply_mapping(session, ai, None, None, batch_node_ids, raw_json=raw_json)
+        _, batch_changed = apply_mapping(session, user_id, ai, None, None, batch_node_ids, raw_json=raw_json)
         if batch_changed:
             any_changes = True
 
     return any_changes
 
-def cleanup_roots(session):
+def cleanup_roots(session, user_id="default"):
     """Post-processing: merge duplicate roots, dissolve generic roots, mark tiny orphans."""
     logger.info("\n[Root Cleanup] Starting post-batch root cleanup...")
     
     # Pre-build node_map and children_map
-    topics = session.query(Topic).all()
+    topics = session.query(Topic).filter(Topic.user_id == user_id).all()
     node_map = {t.id: t for t in topics}
     children_map = defaultdict(list)
     for t in topics:
@@ -1268,7 +1270,7 @@ def cleanup_roots(session):
     # relocate_problem_roots() will handle them via LLM after this function returns.
     session.expire_all()
     # Rebuild topics and roots after merges
-    topics = session.query(Topic).all()
+    topics = session.query(Topic).filter(Topic.user_id == user_id).all()
     node_map = {t.id: t for t in topics}
     children_map = defaultdict(list)
     for t in topics:
@@ -1316,14 +1318,14 @@ def cleanup_roots(session):
     logger.info("[Root Cleanup] Complete.")
     return any_changes
 
-def relocate_problem_roots(session, node_map, children_map, mem_count_map):
+def relocate_problem_roots(session, user_id="default", node_map=None, children_map=None, mem_count_map=None):
     logger.info("\n PHASE 3: RELOCATE PROBLEM ROOTS")
     ai = SafeAI()
     embedder = EmbeddingManager()
     from mindcache.Database.db_manager import DatabaseManager
 
     session.expire_all()
-    topics = session.query(Topic).all()
+    topics = session.query(Topic).filter(Topic.user_id == user_id).all()
     
     # Rebuild maps to be safe with the latest state after cleanup_roots
     node_map = {t.id: t for t in topics}
@@ -1487,13 +1489,13 @@ def relocate_problem_roots(session, node_map, children_map, mem_count_map):
     for f in futures:
         idx, raw_json, batch_node_ids = f.result()
         logger.info(f"\n  Applying Relocation Batch {idx+1}/{len(batches)} mapping...")
-        _, batch_changed = apply_mapping(session, ai, None, None, batch_node_ids, raw_json=raw_json)
+        _, batch_changed = apply_mapping(session, user_id, ai, None, None, batch_node_ids, raw_json=raw_json)
         if batch_changed:
             any_changes = True
             
     return any_changes
 
-def split_overloaded_leaves(session, max_limit=100):
+def split_overloaded_leaves(session, user_id="default", max_limit=100):
     from sklearn.cluster import KMeans
     from mindcache.Database.embedder import EmbeddingManager
     from pydantic import BaseModel, Field
@@ -1511,14 +1513,14 @@ def split_overloaded_leaves(session, max_limit=100):
     embedder = EmbeddingManager()
     
     session.expire_all()
-    topics = session.query(Topic).all()
+    topics = session.query(Topic).filter(Topic.user_id == user_id).all()
     children_map = defaultdict(list)
     for t in topics:
         children_map[t.parent_id].append(t)
         
     leaves = [t for t in topics if not children_map.get(t.id)]
     
-    counts = _precompute_memory_counts(session)
+    counts = _precompute_memory_counts(session, user_id=user_id)
     overloaded_leaves = []
     for leaf in leaves:
         if counts.get(leaf.id, 0) > max_limit:
@@ -1631,7 +1633,8 @@ def split_overloaded_leaves(session, max_limit=100):
                 new_topic = Topic(
                     name=normalize_topic_name(sub.name),
                     level=leaf.level + 1 if sub.placement == 'child' else leaf.level,
-                    parent_id=leaf.id if sub.placement == 'child' else leaf.parent_id
+                    parent_id=leaf.id if sub.placement == 'child' else leaf.parent_id,
+                    user_id=user_id
                 )
                 session.add(new_topic)
                 session.flush()
@@ -1653,25 +1656,25 @@ def split_overloaded_leaves(session, max_limit=100):
             logger.info(f"      Failed to split leaf {leaf.name}: {e}")
             session.rollback()
 
-def reorganize_tree(dry_run=True):
+def reorganize_tree(user_id="default", dry_run=True):
     SessionLocal = sessionmaker(bind=Session.kw['bind'], expire_on_commit=False)
     session = SessionLocal()
     try:
         # 0. Check and split overloaded leaves before doing anything else
-        split_overloaded_leaves(session, max_limit=100)
+        split_overloaded_leaves(session, user_id=user_id, max_limit=100)
 
         # 1. Build in-memory maps FIRST — avoids N+1 ORM queries and guarantees
         #    that full_tree_text, children_map, and node_map are all consistent snapshots.
         children_map = defaultdict(list)
         topic_by_id = {None: None}
-        topics = session.query(Topic).all()
+        topics = session.query(Topic).filter(Topic.user_id == user_id).all()
         for t in topics:
             topic_by_id[t.id] = t
             children_map[t.parent_id].append(t)
         parent_map = {t.id: topic_by_id.get(t.parent_id) for t in topics}
 
         # Pre-compute memory counts per node for richer tree text
-        mem_count_map = _precompute_memory_counts(session)
+        mem_count_map = _precompute_memory_counts(session, user_id=user_id)
 
         # Build tree text using in-memory maps (no N+1) with \n\n root separator
         all_roots = [t for t in topics if t.parent_id is None]
@@ -1687,15 +1690,15 @@ def reorganize_tree(dry_run=True):
 
         changed = False
         if total_tokens < TOKEN_LIMIT:
-            _, pass_changed = pass_global_bootstrap(session, full_tree_text, children_map=children_map, node_map=topic_by_id)
+            _, pass_changed = pass_global_bootstrap(session, user_id, full_tree_text, children_map=children_map, node_map=topic_by_id)
             if pass_changed:
                 changed = True
         else:
-            pass_changed = kmeans_dedup_pass(session, children_map=children_map, node_map=topic_by_id, mem_count_map=mem_count_map)
+            pass_changed = kmeans_dedup_pass(session, user_id, children_map=children_map, node_map=topic_by_id, mem_count_map=mem_count_map)
             if pass_changed:
                 changed = True
 
-        cleanup_changed = cleanup_roots(session)  # Merges same-name duplicates and marks problem roots
+        cleanup_changed = cleanup_roots(session, user_id=user_id)  # Merges same-name duplicates and marks problem roots
         if cleanup_changed:
             changed = True
 
@@ -1706,13 +1709,13 @@ def reorganize_tree(dry_run=True):
             logger.info("[Second pass] Skipping because no changes were made in the first pass.")
         else:
             session.expire_all()
-            topics2 = session.query(Topic).all()
+            topics2 = session.query(Topic).filter(Topic.user_id == user_id).all()
             topic_by_id2 = {None: None}
             children_map2 = defaultdict(list)
             for t in topics2:
                 topic_by_id2[t.id] = t
                 children_map2[t.parent_id].append(t)
-            mem_count_map2 = _precompute_memory_counts(session)
+            mem_count_map2 = _precompute_memory_counts(session, user_id=user_id)
             all_roots2 = [t for t in topics2 if t.parent_id is None]
             full_tree_text2 = ""
             for r in all_roots2:
@@ -1723,13 +1726,13 @@ def reorganize_tree(dry_run=True):
             logger.info(f"[Second pass] Tree tokens after first pass: {total_tokens2}/{TOKEN_LIMIT}")
 
             if total_tokens2 < TOKEN_LIMIT:
-                pass_global_bootstrap(session, full_tree_text2, children_map=children_map2, node_map=topic_by_id2)
+                pass_global_bootstrap(session, user_id, full_tree_text2, children_map=children_map2, node_map=topic_by_id2)
             else:
-                kmeans_dedup_pass(session, children_map=children_map2, node_map=topic_by_id2, mem_count_map=mem_count_map2)
+                kmeans_dedup_pass(session, user_id, children_map=children_map2, node_map=topic_by_id2, mem_count_map=mem_count_map2)
 
-            relocate_problem_roots(session, node_map=topic_by_id2, children_map=children_map2, mem_count_map=mem_count_map2)
-            collapse_single_child_chains(session)
-            cleanup_stale_source_maps(session)  # Purge deleted IDs from parent source_maps
+            relocate_problem_roots(session, user_id=user_id, node_map=topic_by_id2, children_map=children_map2, mem_count_map=mem_count_map2)
+            collapse_single_child_chains(session, user_id=user_id)
+            cleanup_stale_source_maps(session, user_id=user_id)  # Purge deleted IDs from parent source_maps
 
     finally:
         session.close()
@@ -1767,12 +1770,12 @@ def choose_name(p_name, c_name):
     return c_norm
 
 
-def collapse_single_child_chains(session):
+def collapse_single_child_chains(session, user_id="default"):
     """
     Find internal nodes with exactly 1 child, and collapse them.
     Moves children/memories of the child to the parent, updates metadata, and deletes the child.
     """
-    topics = session.query(Topic).all()
+    topics = session.query(Topic).filter(Topic.user_id == user_id).all()
     node_map = {t.id: t for t in topics}
     children_map = defaultdict(list)
     for t in topics:
@@ -1846,13 +1849,13 @@ def collapse_single_child_chains(session):
         logger.info("  [Collapse] No single-child wrapper nodes found.")
 
 
-def cleanup_stale_source_maps(session):
+def cleanup_stale_source_maps(session, user_id="default"):
     """
     After tree reorganization, purge deleted node IDs from all parent source_maps
     and ignored_ids. Prevents ghost references from corrupting retrieval.
     """
-    all_valid_ids = set(str(t.id) for t in session.query(Topic.id).all())
-    parents = [t for t in session.query(Topic).all() if t.children]
+    all_valid_ids = set(str(t.id) for t in session.query(Topic.id).filter(Topic.user_id == user_id).all())
+    parents = [t for t in session.query(Topic).filter(Topic.user_id == user_id).all() if t.children]
     
     cleaned = 0
     for parent in parents:
