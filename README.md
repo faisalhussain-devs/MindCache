@@ -141,7 +141,7 @@ flowchart LR
 
     P4["⚖️ Phase 4 — Decision-Anchored BM25 Expansion\n(Top decisions become secondary BM25 queries,\nretrieve related episodic & knowledge)"]:::anchor
 
-    P5["📋 Phase 5 — Directive Injection & Context Assembly\n(Abstention, Recency, Profile directives)")"]:::rerank
+    P5["📋 Phase 5 — Directive Injection & Context Assembly\n(Abstention, Recency, Profile directives)"]:::rerank
 
     OUT["📤 Final Context → LLM Prompt"]:::output
 
