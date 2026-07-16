@@ -429,51 +429,100 @@ class DatabaseManager:
         finally:
             session.close()
 
-    def run_decision_state_analyzer(self, user_id="default"):
+    def run_decision_state_analyzer(self, user_id="default", similarity_threshold=0.75):
         """
-        Background job: finds decisions that haven't been analyzed yet
-        (no context or no last_validated_at) and runs the analyzer per topic.
-        Can be called anytime — fully decoupled from save_extracted_memory.
+        Background job: Groups decisions based on Complete-Linkage semantic similarity.
+        If a cluster contains at least one unanalyzed decision (no context or no last_validated_at),
+        runs the decision analyzer on that cluster.
         """
         session = self.Session()
         try:
-            from sqlalchemy import select
-            multiple_decisions_subquery = (
-                session.query(DecisionMemory.topic_id)
-                .filter(DecisionMemory.user_id == user_id)
-                .group_by(DecisionMemory.topic_id)
-                .having(func.count(DecisionMemory.id) > 1)
-                .subquery()
-            )
-            # 2. Main query to find topic_ids with unanalyzed decisions within those topics
-            unanalyzed = (
-                session.query(DecisionMemory.topic_id)
+            # 1. Fetch all active/conditional decisions for the user
+            decisions = (
+                session.query(DecisionMemory)
                 .filter(
-                    DecisionMemory.user_id == user_id
+                    DecisionMemory.user_id == user_id,
+                    DecisionMemory.status.in_(["active", "conditional"])
                 )
-                .filter(
-                    (DecisionMemory.context.is_(None)) | 
-                    (DecisionMemory.last_validated_at.is_(None))
-                )
-                .filter(DecisionMemory.topic_id.in_(select(multiple_decisions_subquery.c.topic_id)))
-                .distinct()
                 .all()
             )
-            logger.info(f"[DB] There are {len(unanalyzed)} decisions that need to be analyzed for user '{user_id}'.")
-            topic_ids = [row[0] for row in unanalyzed if row[0] is not None]
             
-            if not topic_ids:
-                logger.info(f"[DecisionAnalyzer] No unanalyzed decisions found for user '{user_id}'.")
+            if not decisions:
+                logger.info(f"[DecisionAnalyzer] No decisions found for user '{user_id}'.")
                 return
+
+            # 2. Check for missing embeddings and generate them on-the-fly
+            missing_embeds = [d for d in decisions if d.embedding is None]
+            if missing_embeds:
+                logger.info(f"[DecisionAnalyzer] Embedding {len(missing_embeds)} missing decision(s) on-the-fly...")
+                from mindcache.Database.embedder import get_embedder
+                embedder = get_embedder()
+                vecs = embedder.get_batch_embeddings([d.content for d in missing_embeds])
+                if vecs is not None:
+                    for d, vec in zip(missing_embeds, vecs):
+                        d.embedding = embedder._to_blob(vec)
+                    session.commit()
+                else:
+                    logger.warning("[DecisionAnalyzer] Failed to compute missing embeddings.")
+
+            # 3. Retrieve normalized embeddings as numpy arrays
+            d_ids = []
+            vectors_list = []
+            for d in decisions:
+                if d.embedding is not None:
+                    d_ids.append(d.id)
+                    vectors_list.append(to_numpy(d.embedding))
             
-            logger.info(f"[DecisionAnalyzer] Found {len(topic_ids)} topic(s) with unanalyzed decisions.")
+            if len(d_ids) < 2:
+                logger.info("[DecisionAnalyzer] Not enough decisions to cluster.")
+                return
+
+            # Construct matrix of embeddings
+            matrix = np.array(vectors_list)
+
+            # 4. Perform Complete-Linkage Agglomerative Clustering
+            from sklearn.cluster import AgglomerativeClustering
+            from collections import defaultdict
+
+            distance_threshold = 1.0 - similarity_threshold
+            clustering = AgglomerativeClustering(
+                n_clusters=None,
+                metric='cosine',
+                distance_threshold=distance_threshold,
+                linkage='complete'
+            )
+            labels = clustering.fit_predict(matrix)
+
+            # 5. Group decisions by cluster label
+            clusters_by_label = defaultdict(list)
+            decisions_by_id = {d.id: d for d in decisions}
+            
+            for idx, label in enumerate(labels):
+                d_id = d_ids[idx]
+                clusters_by_label[label].append(decisions_by_id[d_id])
+                
+            components = list(clusters_by_label.values())
+
+            # 6. Filter for clusters with size > 1 and check if they need analysis
+            analyzed_count = 0
             analyzer = DecisionStateAnalyzer()
             
-            for tid in topic_ids:
-                analyzer.analyze(session, tid, user_id=user_id)
+            for cluster in components:
+                if len(cluster) <= 1:
+                    continue
+                
+                # Check if cluster contains any unanalyzed decision
+                has_unanalyzed = any(
+                    (d.context is None) or (d.last_validated_at is None) for d in cluster
+                )
+                
+                if has_unanalyzed:
+                    logger.info(f"[DecisionAnalyzer] Analyzing cluster of size {len(cluster)}: {[d.id for d in cluster]}")
+                    analyzer.analyze_cluster(session, cluster)
+                    analyzed_count += 1
             
             session.commit()
-            logger.info(f"[DecisionAnalyzer] Complete.")
+            logger.info(f"[DecisionAnalyzer] Complete. Processed {analyzed_count} cluster(s).")
             
         except Exception as e:
             session.rollback()

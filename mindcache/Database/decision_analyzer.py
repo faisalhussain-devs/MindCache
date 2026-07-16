@@ -1,128 +1,67 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy.orm import Session
-from mindcache.Database.db_setup import (
-    DecisionMemory, EpisodicMemory, KnowledgeMemory, UserMemory
-)
+from mindcache.Database.db_setup import DecisionMemory
 from mindcache.Memory_extract.summary_extractor import Summary_Extractor
 import logging
 logger = logging.getLogger(__name__)
 
 
 ANALYSIS_PROMPT = """You are the Decision State Analyzer for a memory database.
-You will receive ALL decisions stored under a single topic, plus supporting memories (facts, events, user preferences).
+You will receive a cluster of semantically related decisions.
 
-Your job: Determine the current STATUS of each decision.
+Your job: Determine the current STATUS of each decision within this semantic cluster.
 
 ### STATUS OPTIONS
 - "active"      → This decision is currently in effect.
-- "superseded"  → A newer decision on the same matter replaced this one.
-- "rejected"    → Evidence shows this decision was wrong or abandoned.
+- "superseded"  → A newer decision in this cluster replaced/evolved this one.
+- "rejected"    → This decision was wrong or abandoned in favor of another one in this cluster.
 - "conditional" → This decision only applies under specific conditions.
 - "inactive"    → No longer relevant but not explicitly rejected.
 
 ### RULES
-1. If two decisions contradict each other, the NEWER one (higher ID) is usually "active" and the older one is "superseded" — unless supporting evidence says otherwise.
-2. Use facts and episodic memories to validate or invalidate decisions.
-3. User preferences always carry extra weight.
-4. Write a clear 1-sentence "context" for EACH decision explaining your reasoning.
-5. decisions MUST appear in your output — only skip if both context and status are already there and there is no need to update them.
+1. If two decisions contradict each other, the NEWER one (higher ID or higher timestamp) is usually "active" and the older one is "superseded".
+2. Compare the decisions carefully to see if a newer one overrides, details, or discards an older one.
+3. Write a clear 1-sentence "context" for EACH decision explaining your reasoning.
+4. All decisions in the cluster MUST appear in your output — only skip if both context and status are already there and there is no need to update them.
 
 ### OUTPUT FORMAT (Strict JSON Array)
 [
   { "id": 12, "status": "superseded", "context": "Replaced by Decision #45 which switched to raw SQL." },
-  { "id": 45, "status": "active", "context": "Currently active. Aligns with user preference for explicit control." }
+  { "id": 45, "status": "active", "context": "Currently active version of the database choice decision." }
 ]
 """
 
-# Time window: only fetch supporting memories within ±T hours of the decision range
-SUPPORT_WINDOW_MINS = 5
 
 class DecisionStateAnalyzer:
     def __init__(self):
         self.extractor = Summary_Extractor(sys_prompt=ANALYSIS_PROMPT)
 
-    def analyze(self, session: Session, topic_id: int, user_id: str = "default"):
+    def analyze_cluster(self, session: Session, cluster_decisions: list[DecisionMemory]):
         """
-        Analyze all decisions for a given topic and update their statuses.
-        Called after new DecisionMemory rows are inserted for this topic.
+        Analyze a cluster of semantically related decisions and update their statuses.
         """
-        # 1. Fetch all decisions for this topic and user
-        decisions = (
-            session.query(DecisionMemory)
-            .filter(
-                DecisionMemory.topic_id == topic_id,
-                DecisionMemory.user_id == user_id
-            )
-            .order_by(DecisionMemory.timestamp.desc())
-            .all()
-        )
-
-        if not decisions:
+        if not cluster_decisions:
             return
 
-        # 2. Compute time window from only NEW decisions (no context yet)
-        new_decisions = [d for d in decisions if not d.context]
-        new_timestamps = [d.timestamp for d in new_decisions if d.timestamp]
-        if new_timestamps:
-            earliest = min(new_timestamps) - timedelta(minutes=SUPPORT_WINDOW_MINS)
-            latest = max(new_timestamps) + timedelta(minutes=SUPPORT_WINDOW_MINS)
-        else:
-            return
+        # Sort oldest first (higher ID means newer)
+        sorted_decisions = sorted(cluster_decisions, key=lambda d: d.id)
 
-        # 3. Fetch supporting context within the time window filtered by user
-        episodic = session.query(EpisodicMemory).filter(
-            EpisodicMemory.topic_id == topic_id,
-            EpisodicMemory.user_id == user_id,
-            EpisodicMemory.timestamp >= earliest,
-            EpisodicMemory.timestamp <= latest
-        ).order_by(EpisodicMemory.timestamp.desc()).all()
-
-        knowledge = session.query(KnowledgeMemory).filter(
-            KnowledgeMemory.topic_id == topic_id,
-            KnowledgeMemory.user_id == user_id,
-            KnowledgeMemory.timestamp >= earliest,
-            KnowledgeMemory.timestamp <= latest
-        ).order_by(KnowledgeMemory.timestamp.desc()).all()
-
-        user_mems = session.query(UserMemory).filter(
-            UserMemory.topic_id == topic_id,
-            UserMemory.user_id == user_id,
-            UserMemory.timestamp >= earliest,
-            UserMemory.timestamp <= latest
-        ).order_by(UserMemory.timestamp.desc()).all()
-
-        # 4. Build prompt with timestamps
+        # Build prompt with timestamps and contents
         decisions_text = "\n".join([
             f"ID {d.id} [{d.timestamp.strftime('%Y-%m-%d %H:%M') if d.timestamp else '?'}]: \"{d.content}\" [status: {d.status}] [context: {d.context or 'None'}]"
-            for d in decisions
+            for d in sorted_decisions
         ])
 
-        support_lines = []
-        for m in episodic:
-            ts = m.timestamp.strftime('%Y-%m-%d %H:%M') if m.timestamp else '?'
-            support_lines.append(f"[EPISODIC {ts}] {m.content}")
-        for m in knowledge:
-            ts = m.timestamp.strftime('%Y-%m-%d %H:%M') if m.timestamp else '?'
-            support_lines.append(f"[KNOWLEDGE {ts}] {m.content}")
-        for m in user_mems:
-            ts = m.timestamp.strftime('%Y-%m-%d %H:%M') if m.timestamp else '?'
-            support_lines.append(f"[USER_PREF {ts}] {m.content}")
-
-        support_text = "\n".join(support_lines) if support_lines else "(No supporting memories)"
-
-        user_prompt = f"""Decisions for this topic:
+        user_prompt = f"""Semantically related decisions in this cluster:
             {decisions_text}
-
-            Supporting Context:
-            {support_text}
             
             Analyze and output the status for each decision as JSON."""
 
         raw_response = self.extractor.summary_extract(user_prompt)
 
         if not raw_response:
-            logger.info(f"[DecisionAnalyzer] LLM returned empty for topic {topic_id}")
+            logger.info(f"[DecisionAnalyzer] LLM returned empty for cluster {[d.id for d in cluster_decisions]}")
             return
 
         try:
@@ -143,7 +82,7 @@ class DecisionStateAnalyzer:
             logger.error(f"[DecisionAnalyzer] Parse error: {e}")
             return
 
-        decisions_by_id = {d.id: d for d in decisions}
+        decisions_by_id = {d.id: d for d in cluster_decisions}
 
         for update in updates:
             did = update.get("id")
@@ -165,4 +104,4 @@ class DecisionStateAnalyzer:
             decision.last_validated_at = datetime.now()
             session.add(decision)
 
-        logger.info(f"[DecisionAnalyzer] Updated {len(updates)} decisions for topic {topic_id}")
+        logger.info(f"[DecisionAnalyzer] Updated {len(updates)} decisions in cluster")
