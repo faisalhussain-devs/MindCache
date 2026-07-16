@@ -1,7 +1,6 @@
 from sqlalchemy.ext.asyncio import session
 import numpy as np
 from datetime import datetime
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import func, text
 from mindcache.Database.db_setup import init_db, ProcessingJob, Topic, TriadBlock, UserMemory, EpisodicMemory, KnowledgeMemory, DecisionMemory, MemoryRegistry, to_numpy, Session
 from mindcache.Database.decision_analyzer import DecisionStateAnalyzer
@@ -91,57 +90,6 @@ class DatabaseManager:
     def _from_blob(blob):
         """Convert bytes back to numpy array"""
         return to_numpy(blob)
-
-    def add_to_queue(self, prompt, turn_ids=None, timestamp=None, user_id="default"):
-        session = self.Session()
-        try:
-            new_job = ProcessingJob(
-                raw_prompt=prompt,
-                turn_ids=turn_ids,
-                timestamp=timestamp,
-                user_id=user_id
-            )
-            session.add(new_job)
-            session.commit()
-            logger.info("[DB] Added job to queue.")
-        except Exception as e:
-            session.rollback()
-            logger.error(f"[DB Error] add_to_queue: {e}")
-        finally:
-            session.close()
-
-    def get_pending_job(self, max_retries=33):
-        session = self.Session()
-        try:
-            job = session.query(ProcessingJob)\
-                .filter(ProcessingJob.status.in_(["processing", "pending", "failed"]))\
-                .filter(ProcessingJob.retry_count < max_retries)\
-                .order_by(ProcessingJob.timestamp.asc())\
-                .first()
-
-            if job:
-                job.status = 'processing'
-                session.commit()
-                return {
-                    'id': job.id,
-                    'raw_prompt': job.raw_prompt,
-                    'turn_ids': job.turn_ids
-                }
-            return None
-        finally:
-            session.close()
-
-    def mark_job_status(self, job_id, status):
-        session = self.Session()
-        try:
-            job = session.get(ProcessingJob, job_id)
-            if job:
-                job.status = status
-                if status == 'failed':
-                    job.retry_count += 1
-                session.commit()
-        finally:
-            session.close()
             
     @classmethod
     def _get_embedder(cls):
@@ -233,6 +181,18 @@ class DatabaseManager:
             return path_str + "\n" + "\n".join(mem_lines)
         return path_str
 
+    def mark_job_status(self, job_id, status):
+        session = self.Session()
+        try:
+            job = session.get(ProcessingJob, job_id)
+            if job:
+                job.status = status
+                if status == 'failed':
+                    job.retry_count += 1
+                session.commit()
+        finally:
+            session.close()
+
     def get_top_leaf_paths(self, raw_text: str, top_k: int = 5, query_embedding: bytes = None) -> list[str]:
         """
         Smart Ingestion: embed the incoming raw job text, compare against all
@@ -268,17 +228,7 @@ class DatabaseManager:
             if not leaves:
                 return []
 
-            # 3. Build / refresh missing or stale leaf embeddings.
-            #
-            # Two cases where an embedding needs to be (re)built:
-            #   a) leaf.embedding is None  — never embedded yet.
-            #   b) leaf has NO description AND enough new memories have arrived since
-            #      the last embed (>= STALE_EMBED_THRESHOLD of total).
-            #
-            # When a description EXISTS, the summarizer already sets embedding=None
-            # whenever it updates the description, so staleness is handled there
-            # automatically — no need to count memories here.
-            STALE_EMBED_THRESHOLD = 0.25  # 10% new memories → re-embed (description-less leaves only)
+            STALE_EMBED_THRESHOLD = 0.25  
 
             to_embed = []
             leaf_vecs = []
@@ -286,8 +236,6 @@ class DatabaseManager:
                 needs_embed = leaf.embedding is None
 
                 if not needs_embed and not (leaf.description or "").strip():
-                    # No description — embedding was built from raw memories.
-                    # Check staleness: how many memories arrived after the embed anchor?
                     if leaf.timestamp is not None:
                         embed_ts = leaf.timestamp
                         all_mems = (
@@ -308,7 +256,6 @@ class DatabaseManager:
                                 needs_embed = True
 
                 if needs_embed:
-                    # Use description if available, otherwise build from raw memories
                     desc = (leaf.description or "").strip()
                     embed_text = desc if desc else self._build_leaf_embed_text(leaf, parent_map)
                     to_embed.append((leaf, embed_text))
@@ -342,8 +289,7 @@ class DatabaseManager:
             top_paths_set = []
             for i in range(sims.shape[0]):
                 partition_sims = sims[i]
-                # Select top 5 for each partition vector
-                top_indices = np.argsort(partition_sims)[::-1][:top_k]
+                top_indices = np.argsort(partition_sims)[::-1][:top_k//3]
                 for idx in top_indices:
                     leaf = leaves[idx]
                     curr = leaf
@@ -393,7 +339,6 @@ class DatabaseManager:
             session.add(new_message)
             session.flush()
 
-            # ── Deduplication: build global hash sets ONCE before the bucket loop ──
             import hashlib
 
             def _h(text: str) -> str:
@@ -412,7 +357,6 @@ class DatabaseManager:
             for bucket in memory_buckets:
                 all_chain_names.extend(bucket.get("topics_branch", []))
             resolver = TopicResolver(session, all_chain_names, user_id=user_id)
-            # ───────────────────────────────────────────────────────────────────────
 
             for bucket in memory_buckets:
                 topics_branch = bucket.get("topics_branch", [])
@@ -440,16 +384,13 @@ class DatabaseManager:
                     for mem_text in texts:
                         mem_hash = _h(mem_text)
 
-                        # ── Global O(1) dedup check ───────────────────────
                         if mem_hash in global_hashes[MemoryClass]:
                             logger.info(f"[DB] Dedup: skipped exact-duplicate {registry_type}: {mem_text[:60]}...")
                             continue
-                        # ── End dedup ─────────────────────────────────────
 
-                        # Register in global registry first
                         reg = MemoryRegistry(memory_type=registry_type, user_id=user_id)
                         session.add(reg)
-                        session.flush()  # Get the global ID
+                        session.flush()
 
                         if MemoryClass == DecisionMemory:
                             atom = MemoryClass(
@@ -472,7 +413,6 @@ class DatabaseManager:
                             )
                         session.add(atom)
 
-                        # Update global hash set so duplicates in the current batch are caught
                         global_hashes[MemoryClass].add(mem_hash)
 
                     topic_leaf_node.embedding = None
@@ -540,29 +480,3 @@ class DatabaseManager:
             logger.error(f"[DB Error] Decision Analyzer: {e}")
         finally:
             session.close()
-
-    def process_memory(self):
-        from mindcache.Memory_extract.input_denoiser import InputDenoiser
-        from mindcache.Memory_extract.memory_extractor import Memory_Extractor
-        inp_denoiser = InputDenoiser()
-        mem_ext = Memory_Extractor()
-        
-        while True:
-            job = self.get_pending_job()
-            if not job:
-                logger.info("No more jobs in queue. Worker going to sleep.")
-                break
-            job_id, prompt = job["id"], job["raw_prompt"]
-            compressed_input = inp_denoiser.compress(prompt)
-            logger.info(f"\n[Worker] Processing Job #{job_id}...")
-        
-            extracted_data = mem_ext.memory_extract(compressed_input)     
-
-            self.save_extracted_memory(
-                job_id,
-                compressed_input, 
-                extracted_data
-            )
-if __name__ == "__main__":
-    db_manager = DatabaseManager()
-    db_manager.process_memory() 

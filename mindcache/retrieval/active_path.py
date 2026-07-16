@@ -1,8 +1,7 @@
 import re
 import time
-from typing import Optional
 from collections import defaultdict
-from sqlalchemy.orm import sessionmaker, defer
+from sqlalchemy.orm import defer
 import numpy as np
 
 from mindcache.Database.embedder import EmbeddingManager
@@ -13,24 +12,22 @@ from mindcache.Database.db_setup import (
 from mindcache.retrieval.structs import RetrievalResult
 from mindcache.retrieval.context_bridge import ContextBridge
 from mindcache.retrieval.root_cache import CollapsedTreeCache, get_tree_cache
-from mindcache.retrieval.hybrid_search import CrossEncoderManager, calculate_rrf
-
+from mindcache.retrieval.hybrid_search import CrossEncoderManager
 
 
 # --- New Partitioned Pipeline Constants ---
-TOP_K_EPISODIC   = 50    # per-type RRF pool
-TOP_K_KNOWLEDGE  = 50
+TOP_K_EPISODIC   = 40    # per-type RRF pool
+TOP_K_KNOWLEDGE  = 40
 TOP_K_USER       = 30    # widened to ensure short user-profile memories enter Jina pool
 TOP_K_DECISION   = 30
 TOP_K_SUMMARIES  = 10    # broad queries only
 
-JINA_FINAL_K_MEMORIES  = 45   # top memories out of merged Jina pool
+JINA_FINAL_K_MEMORIES  = 30   # top memories out of merged Jina pool
 JINA_FINAL_K_SUMMARIES = 3    # top summaries out of merged Jina pool
 JINA_FINAL_INDIVIDUAL = 5  # per-type cap: user head-start of -3 → max 11 user slots, ensuring profile facts aren't crowded out
 HEAVY_TOP_K_ANCHORS    = 3    # top decision anchors for BM25 expansion
 
 MIN_BM25_THRESHOLD = 0.5   # kept for BM25 expansion pre-filter
-
 
 from mindcache.Database.nodes_summary import RecursiveSummarizer
 
@@ -338,7 +335,7 @@ class ActivePathRetrieval:
 
         v_scores = np.where(vec_ranks > 0, 1.0 / (60.0 + vec_ranks), 0.0)
         b_scores = np.where(bm25_ranks > 0, 1.0 / (60.0 + bm25_ranks), 0.0)
-        rrf_scores = (0.8 * v_scores + 0.2 * b_scores).astype(np.float32)
+        rrf_scores = (0.7 * v_scores + 0.3 * b_scores).astype(np.float32)
 
         t2 = time.time()
         logger.info(f"[Retrieval] BM25+Vec+RRF on {N} nodes: {t2-t1:.3f}s")
@@ -347,7 +344,6 @@ class ActivePathRetrieval:
         qc = classify_query(ctx.query_text)
         query_type = qc.label
         use_summaries = qc.is_broad
-        show_timestamps = True  # Always show timestamps on every memory so the LLM can resolve conflicts by recency
 
         # Phase 2 — Partitioned Top-K Extraction
         episodic_indices = []
@@ -388,13 +384,6 @@ class ActivePathRetrieval:
             top_summaries = summary_sorted[:TOP_K_SUMMARIES]
 
         # Phase 3 — Unified Merged-Pool Reranking (Jina v2 Base CE)
-        #
-        # All types are merged into one candidate pool and ranked together in a
-        # single Jina v2 pass. From the sorted output:
-        #   - The first HEAVY_TOP_K_ANCHORS decision memories become BM25-expansion anchors.
-        #   - All remaining entries fill the general pool subject to per-type caps.
-        # This ensures decision memories compete fairly on the same relevance scale
-        # as episodic/knowledge/user memories — no separate rerank pass needed.
 
         merged_candidates = []
 
@@ -427,8 +416,6 @@ class ActivePathRetrieval:
         for idx in top_user:
             merged_candidates.append(_make_memory_candidate(idx, data.entries[idx]))
         for idx in top_decision:
-            # Decision entries carry anchor_query_text so Phase 5 BM25 expansion
-            # can use the memory's own content as the anchor query.
             merged_candidates.append(_make_memory_candidate(idx, data.entries[idx], include_anchor_text=True))
 
         for idx in top_summaries:
@@ -454,8 +441,6 @@ class ActivePathRetrieval:
         additional_tier_memories = []
         selected_general_memories = []
         selected_general_summaries = []
-        # user starts at -3 to guarantee at least (JINA_FINAL_INDIVIDUAL+3)=8 user slots
-        # before the global cap kicks in, preventing profile facts being crowded out.
         selected_individual = {"user": -3, "decision": 0, "knowledge": 0, "episodic": 0}
 
         if merged_candidates:
@@ -464,12 +449,9 @@ class ActivePathRetrieval:
             for c in reranked_merged:
                 if c["entry_type"] == "memory":
                     mtype = c["memory_type"]
-                    # Decision memories: greedily fill anchor slots first
                     if mtype == "decision" and len(top3_decision_anchors) < HEAVY_TOP_K_ANCHORS:
                         top3_decision_anchors.append(c)
-                        # Anchors are excluded from the general pool entirely
                         continue
-                    # General pool: per-type capped fixed tier → overflow additional tier
                     if selected_individual[mtype] < JINA_FINAL_INDIVIDUAL:
                         selected_individual[mtype] += 1
                         fixed_tier_memories.append(c)
@@ -508,7 +490,7 @@ class ActivePathRetrieval:
                 # Sort by BM25 score descending
                 candidates.sort(key=lambda x: -x[1])
                 
-                # Take top 30 BM25 candidates (widened for better expansion recall)
+                # Take top 20 BM25 candidates (widened for better expansion recall)
                 top_candidates = candidates[:20]
 
                 expansion_entries = []
@@ -587,14 +569,14 @@ class ActivePathRetrieval:
             for cand_list in deduped_expansions_map.values():
                 for c in cand_list:
                     mem_ids_by_type[c["memory_type"]].add(c["memory_id"])
-            assembly_db_map = self._fetch_memories_batch(session, mem_ids_by_type)
+            assembly_db_map = self._fetch_memories_batch(session, mem_ids_by_type, user_id=user_id)
 
             topic_ids = set()
             selected_summaries = selected_general_summaries
             if use_summaries:
                 for c in selected_summaries:
                     topic_ids.add(c["topic_id"])
-            topic_db_map = self._fetch_topics_batch(session, topic_ids)
+            topic_db_map = self._fetch_topics_batch(session, topic_ids, user_id=user_id)
 
             context_parts = []
             collected_leaf_ids = set()
@@ -697,16 +679,21 @@ class ActivePathRetrieval:
                     lines = []
                     for m in type_mems:
                         mem_entry = assembly_db_map.get(m["memory_id"])
+                        if label == "DECISION":
+                            status = getattr(mem_entry, "status", "active") if mem_entry else "active"
+                            context = getattr(mem_entry, "context", "")
+                            header = f"[DECISION ({status})] | Context Behind this decision : {context}"
+                        else:
+                            header = ""
                         if mem_entry and mem_entry.content:
                             ts = mem_entry.timestamp.strftime("%Y-%m-%d %H:%M") if mem_entry.timestamp else None
                             ts_line = f"[Recorded: {ts}]\n" if ts else ""
-                            lines.append(f"{ts_line}{mem_entry.content}")
+                            lines.append(f"{header}{ts_line}{mem_entry.content}")
 
                     if lines:
                         content_str = "\n".join(lines)
                         if label == "DECISION":
-                            status = getattr(mem_entry, "status", "active") if mem_entry else "active"
-                            header = f"[DECISION ({status})] {topic_name}"
+                            header = f"{topic_name}"
                         else:
                             header = f"[{label}] {topic_name}"
 
@@ -718,34 +705,21 @@ class ActivePathRetrieval:
 
             # 8d. Format individual branch summaries
             branch_candidates = [c for c in selected_summaries if not c.get("is_leaf")]
-            individual_branches = []
 
             if use_summaries and branch_candidates:
-                sibling_groups = {}
                 for bc in branch_candidates:
                     topic = topic_db_map.get(bc["topic_id"])
                     if not topic:
                         continue
-                    parent_id = topic.parent_id
-                    if parent_id is not None:
-                        sibling_groups.setdefault(parent_id, []).append((bc, topic))
-
-                for group in sibling_groups.values():
-                    for bc, topic in group:
-                        if topic.level != 0:
-                            individual_branches.append((bc, topic))
-
-            for bc, topic in individual_branches:
-                content = topic.description or ""
-                if not content.strip():
-                    continue
-                collected_branch_ids.add(topic.id)
-                header_tag  = "[BRANCH SUMMARY]"
-                context_parts.append(
-                    f"{header_tag} {topic.name}\n"
-                    f"{content}\n"
-                )
-
+                    content = topic.description or ""
+                    if not content.strip():
+                        continue
+                    collected_branch_ids.add(topic.id)
+                    header_tag  = "[BRANCH SUMMARY]"
+                    context_parts.append(
+                        f"{header_tag} {topic.name}\n"
+                        f"{content}\n"
+                    )
             # Gather all unique expanded memories for tracking
             selected_expansions = []
             for anchor in top3_decision_anchors:
@@ -780,7 +754,7 @@ class ActivePathRetrieval:
             query_type=query_type,
         )
 
-    def _fetch_memories_batch(self, session, memory_ids_by_type):
+    def _fetch_memories_batch(self, session, memory_ids_by_type, user_id=None):
         results = {}
         mem_class_map = {
             "knowledge": KnowledgeMemory,
@@ -793,15 +767,21 @@ class ActivePathRetrieval:
                 continue
             MemClass = mem_class_map.get(mtype)
             if MemClass:
-                mems = session.query(MemClass).options(defer(MemClass.embedding)).filter(MemClass.id.in_(list(ids))).all()
+                query = session.query(MemClass).options(defer(MemClass.embedding)).filter(MemClass.id.in_(list(ids)))
+                if user_id:
+                    query = query.filter(MemClass.user_id == user_id)
+                mems = query.all()
                 for m in mems:
                     results[m.id] = m
         return results
 
-    def _fetch_topics_batch(self, session, topic_ids):
+    def _fetch_topics_batch(self, session, topic_ids, user_id=None):
         results = {}
         if topic_ids:
-            topics = session.query(Topic).options(defer(Topic.embedding)).filter(Topic.id.in_(list(topic_ids))).all()
+            query = session.query(Topic).options(defer(Topic.embedding)).filter(Topic.id.in_(list(topic_ids)))
+            if user_id:
+                query = query.filter(Topic.user_id == user_id)
+            topics = query.all()
             for t in topics:
                 results[t.id] = t
         return results

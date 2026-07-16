@@ -200,17 +200,14 @@ class Memory_Extractor():
 
         return text.strip()
 
-
     def memory_extract(self, prompt="", query_embedding: bytes = None):
         prompt = self._clean_prompt(prompt)
 
-        # Smart Ingestion: vector search for top 5 most similar existing leaf paths for each sub partition
-        # query_embedding is a pre-calculated blob (is_query=True) from the processing queue.
         final_prompt = prompt
         grounded = False
         if self._db is not None:
             try:
-                top_paths = self._db.get_top_leaf_paths(prompt, top_k=5, query_embedding=query_embedding)
+                top_paths = self._db.get_top_leaf_paths(prompt, top_k=10, query_embedding=query_embedding)
                 if top_paths:
                     grounded = True
                     formatted = "\n".join(f"  {i+1}. {p}" for i, p in enumerate(top_paths))

@@ -4,7 +4,6 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Union
 from collections import defaultdict
-from datetime import datetime
 from functools import lru_cache
 import logging
 logger = logging.getLogger(__name__)
@@ -60,7 +59,6 @@ class MemoryMeta:
 
 CacheEntry = Union[NodeMeta, MemoryMeta]
 
-
 class UnionFind:
     def __init__(self):
         self.parent = {}
@@ -100,8 +98,6 @@ class UnionFind:
         """
         Serialize the UnionFind as two plain Python dicts.
         Returns (parent, size) — both are safe to pickle and survive class changes.
-        Saving size is critical: without it, union-by-size decisions after reload
-        would treat every word family as size=1, producing an unbalanced tree.
         """
         return dict(self.parent), dict(self.size)
 
@@ -173,6 +169,56 @@ def refresh_tree_cache(user_id="default"):
     CollapsedTreeCache(user_id=user_id).clear()
 
 
+from collections import OrderedDict
+import threading
+
+_COLLAPSED_CACHE_LOCK = threading.Lock()
+_COLLAPSED_CACHE_REGISTRY = OrderedDict()
+_COLLAPSED_CACHE_MAX_SIZE = 16
+
+def _get_cached_collapsed_data(user_id: str) -> Optional["CollapsedTreeCacheData"]:
+    with _COLLAPSED_CACHE_LOCK:
+        if user_id in _COLLAPSED_CACHE_REGISTRY:
+            # Move to end (most recently used)
+            data = _COLLAPSED_CACHE_REGISTRY.pop(user_id)
+            _COLLAPSED_CACHE_REGISTRY[user_id] = data
+            return data
+    return None
+
+def _set_cached_collapsed_data(user_id: str, data: "CollapsedTreeCacheData") -> None:
+    with _COLLAPSED_CACHE_LOCK:
+        if user_id in _COLLAPSED_CACHE_REGISTRY:
+            _COLLAPSED_CACHE_REGISTRY.pop(user_id)
+        _COLLAPSED_CACHE_REGISTRY[user_id] = data
+        if len(_COLLAPSED_CACHE_REGISTRY) > _COLLAPSED_CACHE_MAX_SIZE:
+            _COLLAPSED_CACHE_REGISTRY.popitem(last=False)
+
+def _clear_cached_collapsed_data(user_id: str) -> None:
+    with _COLLAPSED_CACHE_LOCK:
+        if user_id in _COLLAPSED_CACHE_REGISTRY:
+            _COLLAPSED_CACHE_REGISTRY.pop(user_id)
+
+
+def embed_and_save(db_session, record, text: str) -> Optional[np.ndarray]:
+    """Helper function to generate an embedding for the given text and save it to the DB record."""
+    if not text:
+        return None
+    try:
+        from mindcache.Database.embedder import get_embedder
+        embedder = get_embedder()
+        vecs = embedder.get_batch_embeddings([text])
+        if vecs is not None and len(vecs) > 0:
+            vec = vecs[0]
+            record.embedding = embedder._to_blob(vec)
+            db_session.add(record)
+            db_session.commit()
+            return vec
+    except Exception as e:
+        db_session.rollback()
+        logger.error(f"[CollapsedTreeCache] Failed to generate and save embedding: {e}")
+    return None
+
+
 class CollapsedTreeCache:
     """
     Module-level singleton. Replaces the old RootLeafCache.
@@ -196,10 +242,13 @@ class CollapsedTreeCache:
 
     @property
     def is_ready(self) -> bool:
-        return self._data is not None and len(self._data.entries) > 0
+        d = self.data
+        return d is not None and len(d.entries) > 0
 
     @property
     def data(self) -> Optional[CollapsedTreeCacheData]:
+        if self._data is None:
+            self._data = _get_cached_collapsed_data(self.user_id)
         return self._data
 
     @staticmethod
@@ -258,7 +307,7 @@ class CollapsedTreeCache:
         Returns np.ndarray of shape (N,) with float scores.
         """
         import math
-        d = self._data
+        d = self.data
         scores = np.zeros(d.corpus_size, dtype=np.float32)
         if not query_tokens:
             return scores
@@ -303,7 +352,7 @@ class CollapsedTreeCache:
         so this is a single matrix-vector dot product — no per-query normalization.
         Returns np.ndarray of shape (N,).
         """
-        d = self._data
+        d = self.data
         if d.embedding_matrix is None:
             return np.zeros(len(d.entries), dtype=np.float32)
 
@@ -332,22 +381,30 @@ class CollapsedTreeCache:
         from mindcache.Database.db_setup import Topic, EpisodicMemory, KnowledgeMemory, UserMemory, DecisionMemory, to_numpy, Session
         db_session = Session()
 
+        # Run database repair for detached memories before building cache
+        try:
+            from mindcache.Database.repair_detached_memories import repair_detached_memories_for_user
+            repair_detached_memories_for_user(db_session, self.user_id)
+        except Exception as repair_err:
+            logger.error(f"[CollapsedTreeCache] Failed to run database repair before building cache: {repair_err}")
+
         try:
             from mindcache.Database.embedder import run_embedding_job, run_memory_embedding_job
 
             has_missing_topics = db_session.query(Topic).filter(
+                Topic.user_id == self.user_id,
                 Topic.description.isnot(None),
                 Topic.embedding.is_(None)
             ).first() is not None
 
             if has_missing_topics:
-                logger.info("[CollapsedTreeCache] Detected missing topic embeddings. Running embedding job...")
+                logger.info(f"[CollapsedTreeCache] Detected missing topic embeddings for user {self.user_id}. Running embedding job...")
                 db_session.close()
-                run_embedding_job()
+                run_embedding_job(user_id=self.user_id)
                 # Clear tree cache and reload tree
                 get_tree_cache.cache_clear()
-                tree = get_tree_cache()
-                db_session = SessionLocal()
+                tree = get_tree_cache(user_id=self.user_id)
+                db_session = Session()
 
             type_map_check = [
                 ("knowledge", KnowledgeMemory),
@@ -358,6 +415,7 @@ class CollapsedTreeCache:
             has_missing_memories = False
             for mem_type, MemClass in type_map_check:
                 query = db_session.query(MemClass).filter(
+                    MemClass.user_id == self.user_id,
                     MemClass.content.isnot(None),
                     MemClass.embedding.is_(None)
                 )
@@ -368,10 +426,10 @@ class CollapsedTreeCache:
                     break
 
             if has_missing_memories:
-                logger.info("[CollapsedTreeCache] Detected missing memory embeddings. Running memory embedding job...")
+                logger.info(f"[CollapsedTreeCache] Detected missing memory embeddings for user {self.user_id}. Running memory embedding job...")
                 db_session.close()
-                run_memory_embedding_job()
-                db_session = SessionLocal()
+                run_memory_embedding_job(user_id=self.user_id)
+                db_session = Session()
 
         except Exception as e:
             logger.info(f"[CollapsedTreeCache] Embeddings check/creation failed during build_all: {e}")
@@ -398,38 +456,29 @@ class CollapsedTreeCache:
             ("user",      UserMemory),
             ("decision",  DecisionMemory),
         ]
-        missing_embeddings = 0
         for mem_type, MemClass in type_map:
-            cols = [
-                MemClass.id,
-                MemClass.topic_id,
-                MemClass.content,
-                MemClass.timestamp,
-                MemClass.message_id,
-                MemClass.embedding,
-            ]
-            query = db_session.query(*cols).filter(MemClass.topic_id.isnot(None))
+            query = db_session.query(MemClass).filter(
+                MemClass.user_id == self.user_id,
+                MemClass.topic_id.isnot(None)
+            )
             if mem_type == "decision":
                 query = query.filter(MemClass.status.in_(["active", "conditional"]))
-            for mem_id, topic_id, content, ts, message_id, emb_blob in query.all():
-                if not content:
+            for mem in query.all():
+                if not mem.content:
                     continue
-                ts_str = ts.strftime("%Y-%m-%d %H:%M") if ts else None
-                vec = to_numpy(emb_blob).copy() if emb_blob else None
+                ts_str = mem.timestamp.strftime("%Y-%m-%d %H:%M") if mem.timestamp else None
+                vec = to_numpy(mem.embedding).copy() if mem.embedding else None
                 if vec is None:
-                    missing_embeddings += 1
-                memory_rows_by_topic[topic_id].append({
-                    "id":         mem_id,
+                    vec = embed_and_save(db_session, mem, mem.content)
+
+                memory_rows_by_topic[mem.topic_id].append({
+                    "id":         mem.id,
                     "type":       mem_type,
-                    "content":    content,
+                    "content":    mem.content,
                     "timestamp":  ts_str,
-                    "message_id": message_id,
+                    "message_id": mem.message_id,
                     "vec":        vec,
                 })
-
-        if missing_embeddings:
-            logger.warning(f"[CollapsedTreeCache] WARNING: {missing_embeddings} memories have no embedding. "
-                  f"Run `run_memory_embedding_job()` to fix.")
 
         # Build a name lookup for topics
         name_by_id  = {n.id: (n.name or "") for n in all_nodes}
@@ -456,7 +505,17 @@ class CollapsedTreeCache:
                         searchable_text=searchable,
                     )
                     entries.append(meta)
-                    embeddings.append(tree.embedding_cache.get(node.id))
+                    
+                    node_emb = tree.embedding_cache.get(node.id)
+                    if node_emb is None:
+                        topic_row = db_session.query(Topic).filter(
+                            Topic.id == node.id,
+                            Topic.user_id == self.user_id
+                        ).first()
+                        if topic_row:
+                            node_emb = embed_and_save(db_session, topic_row, desc)
+                            tree.embedding_cache[node.id] = node_emb
+                    embeddings.append(node_emb)
 
             mem_rows = memory_rows_by_topic.get(node.id, [])
             if not mem_rows:
@@ -607,7 +666,6 @@ class CollapsedTreeCache:
             self._data.inverted_index[family][new_doc_idx] = self._data.inverted_index[family].get(new_doc_idx, 0) + 1
 
         # 3. Incremental IDF update — only recompute IDF for terms that appear
-        #    in the new document. Full-corpus recompute was O(V) on every ingest.
         self._data.corpus_size = len(self._data.entries)
         self._data.avg_dl = (
             self._data.avg_dl * (self._data.corpus_size - 1) + len(tokens)
@@ -623,12 +681,41 @@ class CollapsedTreeCache:
                     1 + (self._data.corpus_size - df + 0.5) / (df + 0.5)
                 )
 
-        # 4. Update embedding matrix — normalize new row before appending
-        #    so the matrix stays pre-normalized (matching build_all behaviour).
+        # 4. Update embedding matrix
         if self._data.embedding_matrix is not None:
             dim = self._data.embedding_matrix.shape[1]
             if embedding is None:
-                vec = np.zeros(dim, dtype=np.float32)
+                logger.info(f"[CollapsedTreeCache] Ingesting memory/node without embedding. Generating immediately...")
+                from mindcache.Database.db_setup import Session, Topic, EpisodicMemory, KnowledgeMemory, UserMemory, DecisionMemory
+                db_sess = Session()
+                vec = None
+                try:
+                    if getattr(entry, "entry_type", "") == "memory":
+                        type_map = {
+                            "knowledge": KnowledgeMemory,
+                            "episodic":  EpisodicMemory,
+                            "user":      UserMemory,
+                            "decision":  DecisionMemory,
+                        }
+                        MemClass = type_map.get(entry.memory_type)
+                        if MemClass:
+                            mem_row = db_sess.query(MemClass).filter(
+                                MemClass.id == entry.memory_id,
+                                MemClass.user_id == self.user_id
+                            ).first()
+                            if mem_row:
+                                vec = embed_and_save(db_sess, mem_row, mem_row.content)
+                    else:
+                        topic_row = db_sess.query(Topic).filter(
+                            Topic.id == entry.topic_id,
+                            Topic.user_id == self.user_id
+                        ).first()
+                        if topic_row:
+                            vec = embed_and_save(db_sess, topic_row, topic_row.description)
+                finally:
+                    db_sess.close()
+                if vec is None:
+                    vec = np.zeros(dim, dtype=np.float32)
             else:
                 vec = np.asarray(embedding, dtype=np.float32)
                 v_norm = np.linalg.norm(vec)
@@ -652,9 +739,6 @@ class CollapsedTreeCache:
                 np.save(self.emb_matrix_file, orig_matrix)
 
             # ── 2. Serialize UnionFind as two plain dicts (parent + size) ──────
-            #    Storing as plain dicts instead of the Python object:
-            #      - Survives class definition changes without breaking the cache
-            #      - Preserves union-by-size state so future unions stay balanced
             uf_parent, uf_size = orig_union_find.to_dicts() if orig_union_find else ({}, {})
             self._data.union_find = {"parent": uf_parent, "size": uf_size}  # plain dict for pickle
 
@@ -667,6 +751,9 @@ class CollapsedTreeCache:
             # Restore live objects in memory
             self._data.embedding_matrix = orig_matrix
             self._data.union_find = orig_union_find
+
+            # Save to in-memory registry
+            _set_cached_collapsed_data(self.user_id, self._data)
 
             size_kb = self.cache_file.stat().st_size / 1024
             logger.info(f"[CollapsedTreeCache] Saved BM25 index to disk ({size_kb:.0f} KB): {self.cache_file}")
@@ -698,7 +785,7 @@ class CollapsedTreeCache:
                 logger.info(f"[CollapsedTreeCache] Detected missing topic embeddings for user {self.user_id}. Running embedding job...")
                 db_session.close()
                 run_embedding_job(user_id=self.user_id)
-                db_session = SessionLocal()
+                db_session = Session()
 
             type_map_check = [
                 ("knowledge", KnowledgeMemory),
@@ -723,7 +810,7 @@ class CollapsedTreeCache:
                 logger.info(f"[CollapsedTreeCache] Detected missing memory embeddings for user {self.user_id}. Running memory embedding job...")
                 db_session.close()
                 run_memory_embedding_job(user_id=self.user_id)
-                db_session = SessionLocal()
+                db_session = Session()
 
             # 1. Fetch all Topic embeddings for this user
             topics = db_session.query(Topic.id, Topic.embedding).filter(
@@ -795,14 +882,6 @@ class CollapsedTreeCache:
                 raise ValueError("Cache file is stale (missing inverted_index or doc_lengths).")
             self._data = data
 
-            # ── Reconstruct UnionFind from serialized dicts ──────────────────
-            # Three-tier fallback for forward/backward cache compatibility:
-            #   1. New format: union_find is a plain {"parent": ..., "size": ...} dict
-            #      → reconstruct from both dicts (correct union-by-size behaviour)
-            #   2. Old format: union_find is an existing UnionFind object (pre-refactor caches)
-            #      → keep it as-is, it still works
-            #   3. Missing: union_find field absent (very old caches)
-            #      → create empty UnionFind, BM25 morphological aliases start fresh
             uf_raw = getattr(self._data, "union_find", None)
             if isinstance(uf_raw, dict) and "parent" in uf_raw and "size" in uf_raw:
                 self._data.union_find = UnionFind.from_dicts(uf_raw["parent"], uf_raw["size"])
@@ -811,7 +890,6 @@ class CollapsedTreeCache:
                 pass  # old pickle format — still valid
             else:
                 self._data.union_find = UnionFind()  # empty — fresh start
-            # ─────────────────────────────────────────────────────────────────
 
             # Load the embedding matrix using zero-copy memory mapping
             n_entries = len(data.entries)
@@ -835,6 +913,9 @@ class CollapsedTreeCache:
             logger.info(f"[CollapsedTreeCache] Loaded BM25 index from disk: {n} entries ({size_kb:.0f} KB)")
             if self._data.embedding_matrix is not None:
                 logger.info(f"[CollapsedTreeCache] Loaded memory-mapped embedding matrix: shape {self._data.embedding_matrix.shape}")
+            
+            # Save to in-memory registry
+            _set_cached_collapsed_data(self.user_id, self._data)
             return True
         except Exception as e:
             logger.info(f"[CollapsedTreeCache] Load failed ({e}). Will rebuild.")
@@ -843,6 +924,7 @@ class CollapsedTreeCache:
 
     def clear(self) -> None:
         self._data = None
+        _clear_cached_collapsed_data(self.user_id)
         if self.cache_file.exists():
             try:
                 self.cache_file.unlink()

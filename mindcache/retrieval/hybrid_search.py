@@ -1,10 +1,5 @@
 import logging
 logger = logging.getLogger(__name__)
-def calculate_rrf(vector_rank: int, bm25_rank: int, k: int = 60) -> float:
-    """Reciprocal Rank Fusion (RRF)"""
-    v_score = 1.0 / (k + vector_rank) if vector_rank > 0 else 0.0
-    b_score = 1.0 / (k + bm25_rank) if bm25_rank > 0 else 0.0
-    return 0.8*v_score + 0.2*b_score
 
 RERANKER_NAME = "jinaai/jina-reranker-v2-base-multilingual"
 

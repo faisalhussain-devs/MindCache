@@ -50,44 +50,41 @@ Most memory systems treat long-term memories as a flat pool of unstructured embe
 
 ### 🔹 Phase 1 — Ingestion Pipeline
 
-> Raw conversations are queued, embedded, and processed by an LLM extraction pipeline. Each memory atom is classified into one of four typed stores and routed to a topic node in the hierarchy.
+> Raw conversations are queued, embedded, and processed in batches. Grounded Routing is performed by querying existing tree paths as constraints *before* extraction. The Decision State Analyzer and reorganization processes execute later as batch tasks.
 
 ```mermaid
-flowchart LR
-    classDef queue    fill:#313244,color:#cdd6f4,stroke:#585b70
-    classDef llm      fill:#cba6f7,color:#11111b,stroke:#11111b
-    classDef episodic fill:#89dceb,color:#11111b,stroke:#11111b
-    classDef know     fill:#a6e3a1,color:#11111b,stroke:#11111b
-    classDef user     fill:#89b4fa,color:#11111b,stroke:#11111b
-    classDef decision fill:#f9e2af,color:#11111b,stroke:#11111b
-    classDef analyzer fill:#f38ba8,color:#11111b,stroke:#11111b
-    classDef tree     fill:#cba6f7,color:#11111b,stroke:#11111b,stroke-dasharray:4 2
+flowchart TD
+    classDef dark      fill:#313244,color:#cdd6f4,stroke:#585b70
+    classDef llm       fill:#cba6f7,color:#11111b,stroke:#11111b
+    classDef tree      fill:#89dceb,color:#11111b,stroke:#11111b
+    classDef yellow    fill:#f9e2af,color:#11111b,stroke:#11111b
+    classDef green     fill:#a6e3a1,color:#11111b,stroke:#11111b
+    classDef analyzer  fill:#f38ba8,color:#11111b,stroke:#11111b
 
-    A["💬 Raw Conversation Turns\n(list of messages)"]:::queue
-    B["📥 Processing Queue\n(Non-blocking buffer)"]:::queue
-    C["🤖 LLM Extraction Pipeline\n+ Embedding Encoder\n+ Grounded Routing Constraints"]:::llm
-
-    D1["📝 Episodic\n(Events & sessions)"]:::episodic
-    D2["🧠 Knowledge\n(Facts & concepts)"]:::know
-    D3["👤 User Memory\n(Preferences & identity)"]:::user
-    D4["⚖️ Decision Memory\n(Choices & directives)"]:::decision
-    E["🔍 Decision State Analyzer\nActive / Superseded /\nConditional / Rejected"]:::analyzer
-
-    F["🌲 Dynamic Topic Tree\n(Hierarchical ontology)"]:::tree
-
-    A -- mc.add --> B
-    B -- mc.process_queue --> C
-    C --> D1 & D2 & D3 & D4
-    D4 <--> E
-    D1 & D2 & D3 & D4 --> F
-    F -.->|"Grounded Routing Constraints\n(prevents duplicate paths)"| C
+    A["💬 Raw Turn"]:::dark --> B{"🤖 Worth Remembering?"}:::llm
+    B -- No --> C["Ignore & Return"]:::dark
+    B -- Yes --> D["🌲 Fetch Top-K Topic Paths"]:::tree
+    D --> E["Smart Grounded Routing"]:::llm
+    E --> F["🤖 Extract & Classify Memories"]:::llm
+    F --> G["Save to Topic Tree Path"]:::tree
+    G --> H{"Batch Complete?"}:::dark
+    
+    H -- Yes --> I["🔍 Analyze Decision States"]:::analyzer
+    I --> J{"⏱️ Crossed REORG_THRESHOLD?"}:::yellow
+    
+    J -- No --> K["Refresh Cache & Persist"]:::green
+    J -- Yes --> L["✂️ Reorganize Tree\n(Leiden Partitioning / Split / Merge)"]:::yellow
+    L --> M{"Summarization Enabled?"}:::yellow
+    M -- Yes --> N["📜 Generate Delta Summaries"]:::llm
+    M -- No --> K
+    N --> K
 ```
 
 ---
 
 ### 🔹 Phase 2 — Dynamic Tree Lifecycle
 
-> The topic tree is never static. Every N memories, a background process reorganizes the tree by splitting overloaded nodes, merging sparse siblings, and building incremental rollup summaries for broad queries.
+> The topic tree is never static. When the ingestion count crosses the reorganization threshold, a background process reorganizes the graph and builds incremental bottom-up summaries.
 
 ```mermaid
 flowchart LR
@@ -98,60 +95,58 @@ flowchart LR
 
     T["🌲 Dynamic Topic Tree\n(Hierarchical ontology)"]:::tree
 
-    R1["✂️ Split overloaded leaf nodes\n(too broad / too many memories)"]:::reorg
-    R2["🔗 Merge sparse sibling nodes\n(semantic overlap detected)"]:::reorg
-    R3["⬆️ Promote / Demote\n(depth optimization)"]:::reorg
-    R4["🌐 Leiden Partitioning\n(Local community grooming & scaling)"]:::reorg
+    R1["✂️ Split overloaded leaf nodes"]:::reorg
+    R2["🔗 Merge sparse sibling nodes"]:::reorg
+    R3["⬆️ Promote / Demote paths"]:::reorg
+    R4["🌐 Leiden Graph Partitioning"]:::reorg
 
-    S["📜 Incremental Delta Summaries\n(bottom-up rollup, LLM processes\nonly new memories, not full history)"]:::summary
+    S["📜 Incremental Delta Summaries\n(Bottom-up delta rollups)"]:::summary
 
-    TH["⏱️ Threshold Trigger\n(every 60 processed jobs)"]:::trigger
+    TH["⏱️ Threshold Trigger\n(TriadBlock Count)"]:::trigger
 
     TH --> T
     T --> R1 & R2 & R3 & R4
     R1 & R2 & R3 & R4 --> T
     T -- "New leaf memories" --> S
-    S -- "Summary stored at parent node" --> T
+    S -- "Summary stored at parent" --> T
 ```
 
 ---
 
-### 🔹 Phase 3 — 5-Phase Hybrid Retrieval Engine
+### 🔹 Phase 3 — Multi-Stage Hybrid Retrieval Engine
 
-> Every search query goes through five sequential phases: query-adaptive classification (fact vs broad), per-type partitioned fusion search, cross-encoder reranking, decision anchor expansion, and directive-aware context assembly.
+> Search queries are processed through a multi-stage preference-anchored pipeline: score generation & RRF, query classification, cross-encoder reranking, decision expansion, and directive assembly.
 
 ```mermaid
-flowchart LR
-    classDef query    fill:#313244,color:#cdd6f4,stroke:#585b70
-    classDef classify fill:#cba6f7,color:#11111b,stroke:#11111b
-    classDef search   fill:#89b4fa,color:#11111b,stroke:#11111b
-    classDef rerank   fill:#f9e2af,color:#11111b,stroke:#11111b
-    classDef anchor   fill:#f38ba8,color:#11111b,stroke:#11111b
-    classDef output   fill:#a6e3a1,color:#11111b,stroke:#11111b
+flowchart TD
+    classDef dark      fill:#313244,color:#cdd6f4,stroke:#585b70
+    classDef llm       fill:#cba6f7,color:#11111b,stroke:#11111b
+    classDef search    fill:#89b4fa,color:#11111b,stroke:#11111b
+    classDef rerank    fill:#f9e2af,color:#11111b,stroke:#11111b
+    classDef anchor    fill:#f38ba8,color:#11111b,stroke:#11111b
+    classDef green     fill:#a6e3a1,color:#11111b,stroke:#11111b
 
-    Q["🔎 Incoming Query"]:::query
-
-    CL["🏷️ Phase 1 — Adaptive Query Classifier\nFact vs Broad / Temporal vs Non-temporal"]:::classify
-
-    P1["📊 Phase 2 — Partitioned Hybrid Search & RRF\nBM25 ＋ Vector search per type\n(Episodic / Knowledge / User / Decision)\nMorphological Aliasing via Union-Find"]:::search
-
-    P1B["📜 Phase 2B — Hierarchical Summaries\n(Traversed for Broad Queries\nwhen keywords / similarity fail)"]:::search
-
-    P3["🎯 Phase 3 — Unified Cross-Encoder Reranking\n(Jina reranker rescores merged pool)"]:::rerank
-
-    P4["⚖️ Phase 4 — Decision-Anchored BM25 Expansion\n(Top decisions become secondary BM25 queries,\nretrieve related episodic & knowledge)"]:::anchor
-
-    P5["📋 Phase 5 — Directive Injection & Context Assembly\n(Abstention, Recency, Profile directives)"]:::rerank
-
-    OUT["📤 Final Context → LLM Prompt"]:::output
-
-    Q --> CL
-    CL -- "Fact query" --> P1
-    CL -- "Broad query" --> P1 & P1B
-    P1 & P1B --> P3
-    P3 --> P4
-    P4 --> P5
-    P5 --> OUT
+    Q["🔎 User Query"]:::dark --> A["Context Bridge & Embed"]:::dark
+    A --> B["Score (Vector + BM25)"]:::search
+    B --> C["Reciprocal Rank Fusion RRF"]:::search
+    
+    C --> D["🏷️ Classify Query\n(Broad vs Fact / Temporal)"]:::llm
+    
+    D --> E["Partitioned Candidate Retrieval"]:::search
+    E --> F["Memory Pools\n(User / Knowledge / Episodic / Decision)"]:::search
+    D -->|"If Broad Query"| G["📜 Summaries Pool"]:::search
+    
+    F & G --> H["🎯 Unified Cross-Encoder Rerank"]:::rerank
+    
+    H --> I["⚖️ Get Top 3 Decisions"]:::anchor
+    H --> J["Get Top-K General Memories"]:::search
+    
+    I --> K["BM25 Anchor Expansion"]:::anchor
+    K --> L["Rerank Expansions"]:::rerank
+    L --> M["Deduplicate Candidates"]:::search
+    
+    J & M --> N["📋 Inject Directives\n(Profile, Recency, Abstention)"]:::rerank
+    N --> OUT["📤 Final Context → LLM Prompt"]:::green
 ```
 
 ---

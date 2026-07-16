@@ -65,14 +65,11 @@ class EmbeddingManager:
         else:
             texts = ["search_document: " + t for t in texts]
 
-        # Process one-by-one to avoid ONNX OOM on long context inputs.
-        # Each text can be up to 8000 chars (~2000 tokens). Splicing with batch_size=1
-        # ensures minimal memory footprint in ONNX Runtime.
-        SUB_BATCH = 1
+        SUB_BATCH = 2
         all_embeddings = []
         for i in range(0, len(texts), SUB_BATCH):
             chunk = texts[i : i + SUB_BATCH]
-            all_embeddings.extend(self.model.embed(chunk, batch_size=1))
+            all_embeddings.extend(self.model.embed(chunk, batch_size=SUB_BATCH))
         embeddings = all_embeddings
         
         # Convert to a stable numpy matrix to slice dims

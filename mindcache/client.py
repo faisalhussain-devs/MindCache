@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 
 from mindcache.Database.db_setup import init_db, ProcessingJob, MemoryRegistry, Topic, UserMemory, KnowledgeMemory, EpisodicMemory, DecisionMemory, Session
-from mindcache.exceptions import IngestionError, RetrievalError, ConfigurationError
+from mindcache.exceptions import IngestionError, RetrievalError
 from mindcache.Database.db_manager import DatabaseManager
 from mindcache.retrieval.active_path import ActivePathRetrieval
 from mindcache.Memory_extract.memory_extractor import Memory_Extractor
@@ -93,7 +93,7 @@ class MindCache:
         finally:
             session.close()
 
-    def process_queue(self, user_id: str = "default", limit: int = None) -> dict:
+    def process_queue(self, user_id: str = "default", limit: int = None, max_retries: int = 5) -> dict:
         """
         Run the memory extraction pipeline on queued jobs for a specific user.
         Processes up to `limit` jobs.
@@ -102,7 +102,8 @@ class MindCache:
             session = self.Session()
             try:
                 query = session.query(ProcessingJob).filter(
-                    ProcessingJob.status == "pending",
+                    ProcessingJob.status.in_(["processing", "pending", "failed"]),
+                    ProcessingJob.retry_count < max_retries,
                     ProcessingJob.user_id == user_id
                 ).order_by(ProcessingJob.id)
                 
@@ -135,10 +136,6 @@ class MindCache:
         except Exception as e:
             raise IngestionError(f"Failed to retrieve pending jobs from queue: {e}") from e
             
-        # --- Snapshot TriadBlock count BEFORE processing ---
-        # This is used at the end to check if we crossed a REORG_THRESHOLD boundary.
-        # Using TriadBlock rows (one per successfully ingested job) rather than `success`
-        # counter avoids mismatch when jobs are skipped or create no memories.
         from mindcache.Database.db_setup import TriadBlock
         _snap_sess = self.Session()
         try:
@@ -199,23 +196,6 @@ class MindCache:
             except Exception as dec_err:
                 logger.warning(f"[MindCache Warning] Decision analyzer failed: {dec_err}")
         
-        # --- Check if we crossed a REORG_THRESHOLD boundary this run ---
-        # Algorithm:
-        #   triads_before = TriadBlock count before this process_queue() call
-        #   triads_after  = TriadBlock count after all jobs in this call are saved
-        #
-        #   We divide each by REORG_THRESHOLD using integer floor division.
-        #   If the quotient increased, we crossed at least one 60-job boundary.
-        #
-        #   Example across multiple runs (REORG_THRESHOLD = 60):
-        #     Run 1: before=0,  after=20  → floor(0/60)=0, floor(20/60)=0  → NO reorg
-        #     Run 2: before=20, after=35  → floor(20/60)=0, floor(35/60)=0 → NO reorg
-        #     Run 3: before=35, after=40  → floor(35/60)=0, floor(40/60)=0 → NO reorg
-        #     Run 4: before=40, after=65  → floor(40/60)=0, floor(65/60)=1 → REORG ✅
-        #     Run 5: before=65, after=75  → floor(65/60)=1, floor(75/60)=1 → NO reorg
-        #     Run 7: before=95, after=125 → floor(95/60)=1, floor(125/60)=2 → REORG ✅
-        #
-        # Sequence: Reorganisation runs first, then Summarisation.
         if success > 0:
             sess = self.Session()
             try:
@@ -246,9 +226,78 @@ class MindCache:
 
         # Automatically refresh tree cache after a successful batch run
         if success > 0:
-            logger.info(f"[MindCache] Successfully processed {success} jobs. Refreshing tree cache...")
-            from mindcache.retrieval.root_cache import refresh_tree_cache
-            refresh_tree_cache(user_id=user_id)
+            from mindcache.retrieval.root_cache import refresh_tree_cache, get_tree_cache, CollapsedTreeCache, MemoryMeta
+            if crossed_threshold:
+                logger.info(f"[MindCache] Reorganization occurred. Rebuilding caches completely for user '{user_id}'...")
+                refresh_tree_cache(user_id=user_id)
+                tree = get_tree_cache(user_id=user_id)
+                cache = CollapsedTreeCache(user_id=user_id)
+                cache.build_all(tree, include_summaries=self.enable_summarization)
+            else:
+                logger.info(f"[MindCache] Updating cache incrementally for user '{user_id}'...")
+                from mindcache.Database.embedder import run_memory_embedding_job
+                run_memory_embedding_job(user_id=user_id)
+                
+                get_tree_cache.cache_clear()
+                cache = CollapsedTreeCache(user_id=user_id)
+                if not cache.is_ready:
+                    cache.load()
+                if not cache.is_ready:
+                    tree = get_tree_cache(user_id=user_id)
+                    cache.build_all(tree, include_summaries=self.enable_summarization)
+                else:
+                    # Incremental ingestion
+                    from mindcache.Database.db_setup import Session, EpisodicMemory, KnowledgeMemory, UserMemory, DecisionMemory, to_numpy
+                    db_sess = Session()
+                    type_map = {
+                        "knowledge": KnowledgeMemory,
+                        "episodic":  EpisodicMemory,
+                        "user":      UserMemory,
+                        "decision":  DecisionMemory,
+                    }
+                    new_entries = []
+                    try:
+                        for mem_type, MemClass in type_map.items():
+                            query = db_sess.query(MemClass).filter(
+                                MemClass.user_id == user_id,
+                                MemClass.topic_id.isnot(None)
+                            )
+                            if mem_type == "decision":
+                                query = query.filter(MemClass.status.in_(["active", "conditional"]))
+                            for mem in query.all():
+                                key = f"mem:{mem_type}:{mem.id}"
+                                if key not in cache.data.entry_key_to_index:
+                                    # Traverse path
+                                    path_parts = []
+                                    curr_topic = mem.topic
+                                    while curr_topic is not None:
+                                        path_parts.append(curr_topic.name or "")
+                                        curr_topic = curr_topic.parent
+                                    path_str = " > ".join(reversed(path_parts))
+                                    searchable = f"{path_str} {mem.content}".strip()
+                                    meta = MemoryMeta(
+                                        memory_id=mem.id,
+                                        memory_type=mem_type,
+                                        topic_id=mem.topic_id,
+                                        name=mem.topic.name if mem.topic else "",
+                                        level=mem.topic.level if mem.topic else 0,
+                                        path=path_str,
+                                        is_leaf=True,
+                                        timestamp=mem.timestamp.strftime("%Y-%m-%d %H:%M") if mem.timestamp else None,
+                                        message_id=mem.message_id,
+                                        searchable_text=searchable,
+                                    )
+                                    emb = to_numpy(mem.embedding).copy() if mem.embedding else None
+                                    new_entries.append((meta, emb))
+                    finally:
+                        db_sess.close()
+
+                    if new_entries:
+                        logger.info(f"[MindCache] Ingesting {len(new_entries)} new memories incrementally into CollapsedTreeCache.")
+                        for meta, emb in new_entries:
+                            cache.ingest_memory(meta, embedding=emb)
+                    else:
+                        logger.info("[MindCache] No new memories to ingest into CollapsedTreeCache.")
                 
         return {"success": success, "failed": failed}
 

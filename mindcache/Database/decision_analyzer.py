@@ -36,7 +36,7 @@ Your job: Determine the current STATUS of each decision.
 """
 
 # Time window: only fetch supporting memories within ±T hours of the decision range
-SUPPORT_WINDOW_MINS = 15
+SUPPORT_WINDOW_MINS = 5
 
 class DecisionStateAnalyzer:
     def __init__(self):

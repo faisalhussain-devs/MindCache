@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from retrieval.root_cache import CollapsedTreeCache, CollapsedTreeCacheData, UnionFind, MemoryMeta, NodeMeta
+from mindcache.retrieval.root_cache import CollapsedTreeCache, CollapsedTreeCacheData, UnionFind, MemoryMeta, NodeMeta
 
 def test_union_find_basic():
     uf = UnionFind()
