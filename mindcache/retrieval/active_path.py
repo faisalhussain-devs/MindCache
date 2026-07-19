@@ -24,7 +24,7 @@ TOP_K_SUMMARIES  = 10    # broad queries only
 
 JINA_FINAL_K_MEMORIES  = 30   # top memories out of merged Jina pool
 JINA_FINAL_K_SUMMARIES = 3    # top summaries out of merged Jina pool
-JINA_FINAL_INDIVIDUAL = 5  # per-type cap: user head-start of -3 → max 11 user slots, ensuring profile facts aren't crowded out
+JINA_FINAL_INDIVIDUAL = 5  # per-type cap
 HEAVY_TOP_K_ANCHORS    = 3    # top decision anchors for BM25 expansion
 
 MIN_BM25_THRESHOLD = 0.5   # kept for BM25 expansion pre-filter
@@ -52,24 +52,16 @@ def _get_content_only(entry) -> str:
 # Keyword-based Query Classifier
 # ML-based classifier (TF-IDF + LogReg) will replace this at a later stage.
 
-_TEMPORAL_PHRASES = [
-    "timeline", "in order", "sequence", "reconstruct", "chronolog",
-    "when i first", "when did i", "which happened first", "before i",
-    "after i", "how many days", "days passed", "between when",
-    "progress in order", "event order", "earliest", "most recent",
-    "started", "began", "first mention", "first time",
-    "what order", "what sequence", "which order", "when was", "how long ago",
-    "how long did",
-]
+
 
 _BROAD_PHRASES = [
-    "summarize", "summary", "summaries", "overview", "compare",
+    "summarize", "summary", "compare",         # "summaries" removed (fires on "chapter summaries" noun)
     "how my understanding", "how did my", "evolved", "developed",
     "across sessions", "all about", "give me an overview", "broad",
-    "explain", "how do i", "how would you", "best way to",
+    "explain", "best way to",                  # "how do i", "how would you" removed (procedural/preference lookup)
     "show me how", "how does", "what are all", "tell me about",
     "describe", "walk me through", "what happened with",
-    "timeline", "reconstruct", "chronolog",
+    "timeline", "reconstruct", "chronolog",    # "overview" removed (fires on document names e.g. "design overview")
 ]
 
 # Shared directive blocks injected into every prompt
@@ -113,24 +105,20 @@ logger = logging.getLogger(__name__)
 @dataclass
 class QueryClassification:
     label: str
-    is_temporal: bool
     is_broad: bool
 
 def classify_query(query: str) -> QueryClassification:
     """
-    Classify the query along two orthogonal dimensions:
-    1. Temporal vs Non-Temporal (checked via _TEMPORAL_PHRASES)
-    2. Broad/Synthesis vs Information Extraction/Fact (checked via _BROAD_PHRASES)
+    Classify the query along one dimension:
+    Broad/Synthesis vs Information Extraction/Fact (checked via _BROAD_PHRASES).
 
-    Returns a QueryClassification object (a subclass of str that acts as either
-    'broad_overview' or 'information_extraction' and holds boolean properties).
+    Returns a QueryClassification with label 'broad_overview' or
+    'information_extraction' and a boolean is_broad flag.
     """
     q = query.lower()
-    is_temporal = any(p in q for p in _TEMPORAL_PHRASES)
     is_broad = any(p in q for p in _BROAD_PHRASES)
-    
     val = "broad_overview" if is_broad else "information_extraction"
-    return QueryClassification(val, is_temporal, is_broad)
+    return QueryClassification(val, is_broad)
 
 
 _RECENCY_DIRECTIVE = (
@@ -155,16 +143,32 @@ _RECENCY_DIRECTIVE = (
     "describe the progression oldest-to-newest using the timestamps as anchors.\n\n"
 )
 
+_CHRONOLOGICAL_DIRECTIVE = (
+    "Chronological Reasoning (ALWAYS ACTIVE): If the question asks about sequences, "
+    "timelines, first mentions, ordering of events, or durations, apply these rules:\n"
+    "  - Chronological Priority: Use the [Recorded: ...] timestamps on retrieved "
+    "entries to determine the sequence of events. Always anchor your answer to "
+    "exact dates where available.\n"
+    "  - First Meaningful Mention: Identify the earliest date a concept was "
+    "substantially discussed, not merely touched on.\n"
+    "  - Zero Hallucination: Do not infer dates, sequences, or durations not "
+    "explicitly stated in the context.\n"
+    "  - Missing Timestamps: If some entries lack timestamps, reason from contextual "
+    "clues (e.g., concept dependency order) and flag the uncertainty.\n"
+    "  - Fixed-Count Lists: If asked for exactly N items, scan the full context first "
+    "and budget across the full timeline — do not exhaust count on early entries.\n"
+    "  - No Clustering: Each list item must represent ONE distinct event or concept, "
+    "anchored to its specific date.\n\n"
+)
 
-def get_system_prompt(is_temporal: bool, is_broad: bool) -> str:
+def get_system_prompt(is_broad: bool) -> str:
     role = "Knowledge Synthesis & Recommendation Engine" if is_broad else "Precise Memory Extraction & Recommendation Engine"
-    if is_temporal:
-        desc = "strict, memory-grounded assistant. Reconstruct chronological sequences and event orderings"
-    elif is_broad:
-        desc = "memory-grounded assistant. Synthesise a comprehensive, structured answer"
-    else:
-        desc = "strict, memory-grounded system. Your primary task is to locate and report the specific fact, recommendation, or detail requested"
-        
+    desc = (
+        "memory-grounded assistant. Synthesise a comprehensive, structured answer"
+        if is_broad
+        else "strict, memory-grounded system. Your primary task is to locate and report the specific fact, recommendation, or detail requested"
+    )
+
     system_prompt = (
         f"SYSTEM ROLE: {role}\n"
         f"You are a {desc} using ONLY the retrieved context.\n"
@@ -173,24 +177,8 @@ def get_system_prompt(is_temporal: bool, is_broad: bool) -> str:
         + _ABSTENTION_DIRECTIVE
         + _MISSING_INFO_DIRECTIVE
         + _RECENCY_DIRECTIVE
+        + _CHRONOLOGICAL_DIRECTIVE
     )
-
-    if is_temporal:
-        system_prompt += (
-            "Chronological Priority: Use the [Recorded: ...] timestamps on retrieved "
-            "entries to determine the sequence of events. Always anchor your answer to "
-            "exact dates where available.\n"
-            "First Meaningful Mention: Identify the earliest date a concept was "
-            "substantially discussed, not merely touched on.\n"
-            "Zero Hallucination: Do not infer dates, sequences, or durations not "
-            "explicitly stated in the context.\n"
-            "Missing Timestamps: If some entries lack timestamps, reason from contextual "
-            "clues (e.g., concept dependency order) and flag the uncertainty.\n"
-            "Fixed-Count Lists: If asked for exactly N items, scan the full context first "
-            "and budget across the full timeline — do not exhaust count on early entries.\n"
-            "No Clustering: Each list item must represent ONE distinct event or concept, "
-            "anchored to its specific date.\n"
-        )
 
     if is_broad:
         system_prompt += (
@@ -216,47 +204,31 @@ def get_system_prompt(is_temporal: bool, is_broad: bool) -> str:
             "preferences and provide a concise compliant suggestion.\n"
         )
 
-
-    if is_temporal:
-        if is_broad:
-            validation = (
-                "FINAL VALIDATION: Are all dates exact? Is the sequence ordered by [Recorded] timestamp? "
-                "Did you check ALL [USER PROFILE] and [DECISION] entries? Is any ordering uncertainty stated? "
-                "Does the answer cover the full arc? Are gaps acknowledged? "
-                "For any topic with multiple memories: did you apply recency — evolution treated as update, "
-                "genuine conflicts flagged with both values surfaced? "
-                "If the question targets a specific event and that event's detail is absent, "
-                "did you use the Missing Info sentence?"
-            )
-        else:
-            validation = (
-                "FINAL VALIDATION: Is the answer a direct, exact extraction? Are all dates exact? "
-                "Is the sequence ordered by [Recorded] timestamp? Did you check ALL [USER PROFILE] and [DECISION] entries? "
-                "For any topic with multiple memories: is the newest treated as authoritative for clear updates; "
-                "are genuine conflicts (not explainable by recency) flagged with both values? "
-                "If the question targets a specific event/date/purchase, does the retrieved context explicitly "
-                "link to that exact event — if not, use the Missing Info sentence."
-            )
+    if is_broad:
+        validation = (
+            "FINAL VALIDATION: Did you read ALL [USER PROFILE] and [DECISION] entries "
+            "first? Does every recommendation comply with the user's standing preferences? "
+            "If a suggestion contradicts a stated preference, remove it or clearly label "
+            "it a last-resort option. Does the answer cover the full arc? Are gaps acknowledged? "
+            "For any topic with multiple memories: did you apply recency — evolution treated as update, "
+            "genuine conflicts flagged with both values surfaced? "
+            "If the answer involves a sequence or timeline: are all dates exact, is the ordering anchored "
+            "to [Recorded] timestamps, and is any ordering uncertainty explicitly stated? "
+            "If the question targets a specific event and that event's detail is absent, "
+            "did you use the Missing Info sentence?"
+        )
     else:
-        if is_broad:
-            validation = (
-                "FINAL VALIDATION: Did you read ALL [USER PROFILE] and [DECISION] entries "
-                "first? Does every recommendation comply with the user's standing preferences? "
-                "If a suggestion contradicts a stated preference, remove it or clearly label "
-                "it a last-resort option. Does the answer cover the full arc? Are gaps acknowledged? "
-                "For any topic with multiple memories: did you apply recency — evolution treated as update, "
-                "genuine conflicts flagged with both values surfaced?"
-            )
-        else:
-            validation = (
-                "FINAL VALIDATION: Is the answer a direct, exact extraction? Did you check "
-                "ALL [USER PROFILE] and [DECISION] entries before answering? If the question "
-                "targets a specific event/date/purchase, does the retrieved context explicitly "
-                "link to that exact event — if not, use the Missing Info sentence. "
-                "For any topic with multiple memories: is the newest treated as authoritative "
-                "for clear updates; are genuine conflicts (not explainable by recency) flagged "
-                "with both values surfaced?"
-            )
+        validation = (
+            "FINAL VALIDATION: Is the answer a direct, exact extraction? Did you check "
+            "ALL [USER PROFILE] and [DECISION] entries before answering? If the question "
+            "targets a specific event/date/purchase, does the retrieved context explicitly "
+            "link to that exact event — if not, use the Missing Info sentence. "
+            "For any topic with multiple memories: is the newest treated as authoritative "
+            "for clear updates; are genuine conflicts (not explainable by recency) flagged "
+            "with both values surfaced? "
+            "If the answer involves dates or sequences: are all dates exact and is the ordering "
+            "anchored to [Recorded] timestamps with uncertainty flagged where timestamps are absent?"
+        )
     system_prompt += validation
     return system_prompt
 
@@ -281,7 +253,8 @@ class ActivePathRetrieval:
         current_prompt: str,
         user_id: str = "default",
         top_k_corpus: int = 30,
-        include_summaries: bool = False
+        include_summaries: bool = False,
+        use_reranker: bool = True,
     ) -> RetrievalResult:
         """
         Multi-Stage Preference-Anchored Retrieval:
@@ -444,7 +417,12 @@ class ActivePathRetrieval:
         selected_individual = {"user": -3, "decision": 0, "knowledge": 0, "episodic": 0}
 
         if merged_candidates:
-            reranked_merged = self.reranker.rerank(merged_candidates, top_k=len(merged_candidates))
+            if use_reranker:
+                reranked_merged = self.reranker.rerank(merged_candidates, top_k=len(merged_candidates))
+            else:
+                # No reranker: sort by RRF score descending as a fallback
+                reranked_merged = sorted(merged_candidates, key=lambda c: c.get("rrf_score", 0), reverse=True)
+                logger.info("[Retrieval] Phase 3: reranker disabled, using RRF ordering.")
 
             for c in reranked_merged:
                 if c["entry_type"] == "memory":
@@ -532,8 +510,12 @@ class ActivePathRetrieval:
                 for c in candidates:
                     c["best_sub_query"] = ce_query
 
-                reranked_expansion = self.reranker.rerank(candidates, top_k=len(candidates))
-                
+                if use_reranker:
+                    reranked_expansion = self.reranker.rerank(candidates, top_k=len(candidates))
+                else:
+                    reranked_expansion = sorted(candidates, key=lambda c: c.get("rrf_score", 0), reverse=True)
+                    logger.info("[Retrieval] Phase 6: reranker disabled, using RRF ordering.")
+
                 # Select top expansions (10 for broad queries, 5 for specific queries)
                 cutoff = 10 if qc.is_broad else 5
                 selected_expansions_map[anchor_key] = reranked_expansion[:cutoff]
@@ -745,7 +727,7 @@ class ActivePathRetrieval:
         n_sums = len(selected_general_summaries)
         logger.info(f"[Retrieval] TOTAL: {total:.2f}s | type={query_type} | {n_mems} memories + {n_sums} summaries = {n_mems+n_sums} context items | 0 LLM calls")
 
-        system_prompt = get_system_prompt(qc.is_temporal, qc.is_broad)
+        system_prompt = get_system_prompt(qc.is_broad)
 
         return RetrievalResult(
             context=full_context,

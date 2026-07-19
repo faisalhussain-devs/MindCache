@@ -1,23 +1,14 @@
-import sys
-import io
-sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
-sys.stderr.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
-
+from mindcache.Database.embedder import EmbeddingManager
 import json
-import os
 import numpy as np
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
 from mindcache.Database.db_setup import Topic, EpisodicMemory, UserMemory, KnowledgeMemory, DecisionMemory, to_numpy, Session
-from mindcache.Database.embedder import EmbeddingManager
 from mindcache.Memory_extract.safe_ai import SafeAI
 from pydantic import BaseModel, Field
 from typing import List, Union, Optional
 from collections import defaultdict
 import re
-import igraph as ig
-import leidenalg
-from sklearn.neighbors import NearestNeighbors
 from concurrent.futures import ThreadPoolExecutor
 import logging
 logger = logging.getLogger(__name__)
@@ -50,8 +41,6 @@ def _precompute_memory_counts(session, user_id="default"):
                 counts[topic_id] += count
     return counts
 
-ROOT_ORTHO_STATE_FILE = os.path.join(os.path.dirname(__file__), ".root_orthogonality_state.json")
-
 class ReorganizedNode(BaseModel):
     id: Union[int, str] = Field(description="Original ID of the node.")
     name: Optional[str] = Field(default=None, description="OMIT THIS KEY if the name is not changing. Only include if renaming the category.")
@@ -60,21 +49,6 @@ class ReorganizedNode(BaseModel):
 
 class TreeReorganizationSchema(BaseModel):
     modified_nodes_only: List[ReorganizedNode] = Field(description="ONLY include nodes that require a change (e.g., merging, newly assigned parent, or renamed). Do NOT include nodes that are already correctly placed and need no changes.")
-
-class SubCategory(BaseModel):
-    name: str = Field(description="Name of the sub-category.")
-    memory_ids: List[int] = Field(description="List of memory IDs that belong to this sub-category.")
-    placement: str = Field(description="'child' if sub-categories should be children of the current node, or 'sibling' if they should replace the current node at the same level (as siblings to it under its parent).")
-
-class LeafSplitSchema(BaseModel):
-    sub_categories: List[SubCategory] = Field(description="List of sub-categories to split the overloaded leaf into. Each memory ID must appear in exactly one sub-category.")
-
-class NodeGrouping(BaseModel):
-    category_name: str = Field(description="Name of the new intermediate grouping category.")
-    child_ids: List[int] = Field(description="List of original child node IDs that belong in this group.")
-
-class GroupOvergrownChildrenSchema(BaseModel):
-    groupings: List[NodeGrouping] = Field(description="List of new intermediate categories to group the overgrown children into. Every child ID must be grouped.")
 
 TOKEN_LIMIT = 6000
 
@@ -109,21 +83,6 @@ def build_branch_text(node, depth=0, lines=None, children_map=None, mem_count_ma
         build_branch_text(child, depth + 1, lines, children_map, mem_count_map)
     if depth == 0:
         return "\n".join(lines)
-
-def build_chain_path_text(node, parent_map=None) -> str:
-    """Builds root > ... > leaf path text for embedding. Uses ORM parent relationship or in-memory map."""
-    curr = node
-    path = []
-    while curr:
-        path.append(curr.name)
-        if parent_map is not None:
-            curr = parent_map.get(curr.id)
-        else:
-            curr = curr.parent
-    path.reverse()
-    path_str = " > ".join(path)
-    desc = f": {node.description}" if getattr(node, 'description', None) else ""
-    return f"{path_str}{desc}"
 
 def _get_all_descendants(node, children_map=None):
     """Recursively collects a node and all its descendants."""
@@ -257,8 +216,6 @@ def enforce_leaf_constraint(session, user_id="default", successfully_mapped_node
                 # Move all children of the current node to the new parent
                 for child in list(node.children):
                     child.parent = new_parent
-                # The current node (holding the memories) stays in its original place as a sibling 
-                # to the new parent, but is renamed to serve as the generic leaf bucket.
                 node.name = f"General {original_name}"
                 node.parent = new_parent
                 node.level = new_parent.level + 1
@@ -325,7 +282,6 @@ def apply_mapping(session, user_id="default", ai=None, prompt=None, system_promp
             logger.info(f"Repair failed: {repair_e}\n")
             return [], False
     any_changes = False
-    auto_adjusted_node_ids = set()  # internal safety moves (not explicit LLM intent)
     
     # 1. Create NEW Parents (case-insensitive, stored as dict for lookup)
     new_parents_db = {}
@@ -417,7 +373,6 @@ def apply_mapping(session, user_id="default", ai=None, prompt=None, system_promp
                     child.parent = db_node.parent
                 else:
                     child.parent = target_node # very exceptional case creating a cycle
-                auto_adjusted_node_ids.add(child.id)
                 logger.info(f"    CHILD '{child.name}' (ID {child.id}): parent {old_pid} -> {db_node.parent_id} (grandparent fallback, cycle)")
             nodes_reparented_by_merge.add(child.id)
         
@@ -427,8 +382,6 @@ def apply_mapping(session, user_id="default", ai=None, prompt=None, system_promp
         session.delete(db_node)
         merge_redirects[node_id] = merge_target_id
         del node_map[node_id]
-        target_node.is_groomed = 1
-        target_node.chain_updated_at = datetime.now()
         any_changes = True
 
     # 3. Update remaining targeted nodes (shifting + renaming + grooming)
@@ -454,9 +407,6 @@ def apply_mapping(session, user_id="default", ai=None, prompt=None, system_promp
         if "name" in n_data and n_data["name"] is not None:
             db_node.name = n_data["name"]
             any_changes = True
-        
-        db_node.is_groomed = 1
-        db_node.chain_updated_at = datetime.now()
         
         # Handle parent_id changes (step 3: shifting/moving nodes)
         if "parent_id" in n_data:
@@ -601,30 +551,19 @@ def apply_mapping(session, user_id="default", ai=None, prompt=None, system_promp
         any_changes = True
     
     # 7. Mark ALL surviving target nodes as groomed (LLM omits nodes already okay)
-    for tgt_id in target_node_ids:
+    for tgt_id in target_ids:
         if tgt_id in node_map:
             db_tgt = node_map[tgt_id]
-            db_tgt.is_groomed = 1
-            db_tgt.chain_updated_at = datetime.now()
             if db_tgt not in successfully_mapped_nodes:
                 successfully_mapped_nodes.append(db_tgt)
 
-    # 8. Nodes touched by automatic cycle handling are code-adjusted, not LLM-groomed.
-    if auto_adjusted_node_ids:
-        for auto_id in auto_adjusted_node_ids:
-            auto_node = node_map.get(auto_id) or session.get(Topic, auto_id)
-            if not auto_node:
-                continue
-            auto_node.is_groomed = 0
-            auto_node.chain_updated_at = datetime.now()
-
-    # 9. Recalculate Levels (BFS from roots) after final structural cleanup.
+    # 8. Recalculate Levels (BFS from roots) after final structural cleanup.
     # Rebuild maps once to ensure absolute correctness of parent/child levels
     node_map = {t.id: t for t in session.query(Topic).filter(Topic.user_id == user_id).all()}
     children_map = defaultdict(list)
     for t in node_map.values():
         children_map[t.parent_id].append(t)
-        
+
     roots = [t for t in node_map.values() if t.parent_id is None]
     queue = [(r, 0) for r in roots]
     visited = set()
@@ -649,109 +588,108 @@ def pass_global_bootstrap(session, user_id="default", full_tree_text="", childre
     system_prompt = "You are an expert knowledge architect building a stable, scalable ontology for an AI memory retrieval system. Optimize for semantic clarity, concept separation, and future growth — NOT for minimum node count. Output valid JSON."
 
     prompt = f"""\
-You are an expert knowledge architect. The entire knowledge tree is shown below (small DB — full global view available). \
-Restructure it into a clean, multi-rooted knowledge tree optimized for semantic retrieval.
+        You are an expert knowledge architect. The entire knowledge tree is shown below (small DB — full global view available). \
+        Restructure it into a clean, multi-rooted knowledge tree optimized for semantic retrieval.
 
-PRIMARY OBJECTIVE:
-Optimize for semantic clarity and future scalability, NOT minimum node count.
-A larger tree with clear concept boundaries is preferable to a smaller tree with broad catch-all categories.
-Merge only TRUE semantic duplicates — concepts that are merely related should remain separate as siblings under a shared parent.
+        PRIMARY OBJECTIVE:
+        Optimize for semantic clarity and future scalability, NOT minimum node count.
+        A larger tree with clear concept boundaries is preferable to a smaller tree with broad catch-all categories.
+        Merge only TRUE semantic duplicates — concepts that are merely related should remain separate as siblings under a shared parent.
 
-NODE FORMAT: Each line is: <id>: <name> [children:N] for parent nodes, or <id>: <name> [memories:N] for leaf nodes.
-- A leaf with [memories:0] is an EMPTY orphan — safe to delete (merged_into or simply flag for cleanup).
-- A leaf with high [memories:N] holds important data — never discard it carelessly during a merge.
-- Do NOT merge a high-memory leaf into another node without being certain they are true semantic duplicates.
+        NODE FORMAT: Each line is: <id>: <name> [children:N] for parent nodes, or <id>: <name> [memories:N] for leaf nodes.
+        - A leaf with [memories:0] is an EMPTY orphan — safe to delete (merged_into or simply flag for cleanup).
+        - A leaf with high [memories:N] holds important data — never discard it carelessly during a merge.
+        - Do NOT merge a high-memory leaf into another node without being certain they are true semantic duplicates.
 
-HOW TO MAKE CHANGES:
-- RENAME:          {{"id": <id>, "name": "New Name"}}
-- MOVE:            {{"id": <id>, "parent_id": <new_parent_id>}}
-- MERGE duplicate: {{"id": <dup_id>, "merged_into_id": <primary_id>}}
-  NOTE: Merges auto-reparent all children of the deleted node. If a child does NOT belong under the merge target, add a SEPARATE parent_id change for it.
-- ELEVATE TO ROOT: {{"id": <id>, "parent_id": null}}
-  Use this ONLY to break distinct major domains (e.g. "Mathematics", "Health") out from a broad wrapper root or to consolidate fragmented same-domain roots.
-- CREATE NEW CATEGORY: To group nodes under a new parent category, set their "parent_id" to a string starting with "NEW_" (e.g. "NEW_CategoryName"). You can also specify parent_id for the new category itself (e.g., set it to null for a new root category, or an integer/string ID to place it under a parent).
+        HOW TO MAKE CHANGES:
+        - RENAME:          {{"id": <id>, "name": "New Name"}}
+        - MOVE:            {{"id": <id>, "parent_id": <new_parent_id>}}
+        - MERGE duplicate: {{"id": <dup_id>, "merged_into_id": <primary_id>}}
+        NOTE: Merges auto-reparent all children of the deleted node. If a child does NOT belong under the merge target, add a SEPARATE parent_id change for it.
+        - ELEVATE TO ROOT: {{"id": <id>, "parent_id": null}}
+        Use this ONLY to break distinct major domains (e.g. "Mathematics", "Health") out from a broad wrapper root or to consolidate fragmented same-domain roots.
+        - CREATE NEW CATEGORY: To group nodes under a new parent category, set their "parent_id" to a string starting with "NEW_" (e.g. "NEW_CategoryName"). You can also specify parent_id for the new category itself (e.g., set it to null for a new root category, or an integer/string ID to place it under a parent).
 
-MANDATORY FIXES (in priority order):
+        MANDATORY FIXES (in priority order):
 
-A. CORRECT ONTOLOGY AND PARENT-CHILD RELATIONSHIPS: Ensure every node is under the most semantically correct parent.
-   - Organize by WHAT a concept IS, not why it came up in conversation.
-   - If a parent has many unrelated children, create intermediate categories to group related siblings.
+        A. CORRECT ONTOLOGY AND PARENT-CHILD RELATIONSHIPS: Ensure every node is under the most semantically correct parent.
+        - Organize by WHAT a concept IS, not why it came up in conversation.
+        - If a parent has many unrelated children, create intermediate categories to group related siblings.
 
-B. MERGE SEMANTIC DUPLICATES — INCLUDING ACROSS DIFFERENT BRANCHES:
-   Actively scan ALL subtrees for the SAME concept appearing under different parent branches.
-   Cross-compare ALL sibling groups. If two nodes represent the same concept but live under
-   different parents, merge them into the semantically correct canonical location.
-   Examples of cross-branch duplicates that MUST be merged:
-     "Savings Goal > Down Payment" AND "Savings Strategy > Down Payment Savings" → merge
-     "Property Assessment > Home Inspection" AND "Property Assessment > Inspections" → merge
-     "Budgeting > Apartment X" AND "Specific Property Instances > Apartment X" → merge
-   Do NOT merge concepts merely because they are strongly related:
-     Do NOT Merge: "Sleep Tracking" and "Sleep Quality" (related but distinct)
-     Do NOT Merge: "Meditation" and "Relaxation Techniques" (meditation is a type of relaxation)
-     Do NOT Merge: "CBT-I" and "Sleep Hygiene" (different treatment approaches)
+        B. MERGE SEMANTIC DUPLICATES — INCLUDING ACROSS DIFFERENT BRANCHES:
+        Actively scan ALL subtrees for the SAME concept appearing under different parent branches.
+        Cross-compare ALL sibling groups. If two nodes represent the same concept but live under
+        different parents, merge them into the semantically correct canonical location.
+        Examples of cross-branch duplicates that MUST be merged:
+            "Savings Goal > Down Payment" AND "Savings Strategy > Down Payment Savings" → merge
+            "Property Assessment > Home Inspection" AND "Property Assessment > Inspections" → merge
+            "Budgeting > Apartment X" AND "Specific Property Instances > Apartment X" → merge
+        Do NOT merge concepts merely because they are strongly related:
+            Do NOT Merge: "Sleep Tracking" and "Sleep Quality" (related but distinct)
+            Do NOT Merge: "Meditation" and "Relaxation Techniques" (meditation is a type of relaxation)
+            Do NOT Merge: "CBT-I" and "Sleep Hygiene" (different treatment approaches)
 
-C. CONSOLIDATE FRAGMENTED ROOTS: If you see many roots that belong to the same broad domain, \
-merge them under a single authoritative root using MOVE operations. Leave only truly orthogonal domains as separate roots.
+        C. CONSOLIDATE FRAGMENTED ROOTS: If you see many roots that belong to the same broad domain, \
+        merge them under a single authoritative root using MOVE operations. Leave only truly orthogonal domains as separate roots.
 
-D. CREATE MEANINGFUL INTERMEDIATE CATEGORIES: If a parent has many distinct but related children, \
-create intermediate categories rather than leaving a flat, overly wide node.
-   Bad:  Sleep Quality > [Meditation, Napping, Exercise, Bedtime Routine, Screen Time, ...]
-   Good: Sleep Quality > Relaxation Techniques > Meditation
-                        > Schedule Management > [Bedtime Routine, Napping]
-                        > Lifestyle Factors > Exercise
+        D. CREATE MEANINGFUL INTERMEDIATE CATEGORIES: If a parent has many distinct but related children, \
+        create intermediate categories rather than leaving a flat, overly wide node.
+        Bad:  Sleep Quality > [Meditation, Napping, Exercise, Bedtime Routine, Screen Time, ...]
+        Good: Sleep Quality > Relaxation Techniques > Meditation
+                                > Schedule Management > [Bedtime Routine, Napping]
+                                > Lifestyle Factors > Exercise
 
-E. FLATTEN POINTLESS WRAPPERS: If a parent has only one child and adds no semantic meaning beyond the child, remove the wrapper.
-   Flatten: "Child Development > Adolescent Development > General Adolescent Development"
-   Do NOT flatten meaningful ontology layers: "Sleep Technology > Sleep Tracking" should stay even with one child.
+        E. FLATTEN POINTLESS WRAPPERS: If a parent has only one child and adds no semantic meaning beyond the child, remove the wrapper.
+        Flatten: "Child Development > Adolescent Development > General Adolescent Development"
+        Do NOT flatten meaningful ontology layers: "Sleep Technology > Sleep Tracking" should stay even with one child.
 
-F. ENFORCE MAXIMUM CHILD WIDTH:
-   No node should have more than 7 direct children.
-   If any node currently has more than 7 direct children, you MUST create 2–4 intermediate
-   grouping categories to group related children under them.
-   Count the [children:N] value shown for each parent node. Any parent with [children:N] where N > 7
-   requires mandatory restructuring.
-   Failure to enforce this is a critical structural error.
+        F. ENFORCE MAXIMUM CHILD WIDTH:
+        No node should have more than 7 direct children.
+        If any node currently has more than 7 direct children, you MUST create 2–4 intermediate
+        grouping categories to group related children under them.
+        Count the [children:N] value shown for each parent node. Any parent with [children:N] where N > 7
+        requires mandatory restructuring.
+        Failure to enforce this is a critical structural error.
 
-GENERAL NODE RULE:
-Nodes named "General [Topic]" are automatically generated memory overflow buckets.
-Do NOT merge, remove, rename, or reorganize them. Evaluate the surrounding ontology instead.
+        GENERAL NODE RULE:
+        Nodes named "General [Topic]" are automatically generated memory overflow buckets.
+        Do NOT merge, remove, rename, or reorganize them. Evaluate the surrounding ontology instead.
 
-ANTI-DUMPING RULE:
-Do NOT create or expand broad catch-all categories. Avoid categories like:
-  "Improvement Strategies", "General Improvement Strategies", "Resources", "Benefits",
-  "Methods", "Techniques", "Information", "Miscellaneous"
-unless ALL children are genuinely instances of the same specific concept.
-Do NOT collapse many distinct concepts into a generic parent simply because they are related.
+        ANTI-DUMPING RULE:
+        Do NOT create or expand broad catch-all categories. Avoid categories like:
+        "Improvement Strategies", "General Improvement Strategies", "Resources", "Benefits",
+        "Methods", "Techniques", "Information", "Miscellaneous"
+        unless ALL children are genuinely instances of the same specific concept.
+        Do NOT collapse many distinct concepts into a generic parent simply because they are related.
 
-FUTURE GROWTH RULE:
-Prefer categories that will remain semantically coherent as new memories accumulate.
-Avoid creating parents that would naturally attract many unrelated future memories.
-A category should still make sense after it grows to 100x its current size.
-  Good category: "Sleep Tracking" (clear, bounded concept)
-  Bad category: "Improvement Strategies" (attracts everything)
+        FUTURE GROWTH RULE:
+        Prefer categories that will remain semantically coherent as new memories accumulate.
+        Avoid creating parents that would naturally attract many unrelated future memories.
+        A category should still make sense after it grows to 100x its current size.
+        Good category: "Sleep Tracking" (clear, bounded concept)
+        Bad category: "Improvement Strategies" (attracts everything)
 
-ROOT QUALITY RULES:
-Root categories should represent major, long-lived domains.
-Avoid roots that: contain very few memories, have only one meaningful child, or represent a relationship rather than a concept.
-Examples of weak roots that should be merged under broader domains: "Resources", "Benefits", "Travel" (with very few memories).
+        ROOT QUALITY RULES:
+        Root categories should represent major, long-lived domains.
+        Avoid roots that: contain very few memories, have only one meaningful child, or represent a relationship rather than a concept.
+        Examples of weak roots that should be merged under broader domains: "Resources", "Benefits", "Travel" (with very few memories).
 
-NAMING RULE:
-Do NOT spend output tokens on capitalization fixes, singular/plural differences, spacing differences, or minor naming variants. These are automatically normalized by the system. Focus on semantic structure only.
+        NAMING RULE:
+        Do NOT spend output tokens on capitalization fixes, singular/plural differences, spacing differences, or minor naming variants. These are automatically normalized by the system. Focus on semantic structure only.
 
-STRUCTURAL RULES:
-1. ONTOLOGICAL STRUCTURE: Organize by WHAT a concept IS, not why it came up.
-2. SIBLING ORTHOGONALITY: Siblings must be mutually exclusive. Merge overlapping siblings.
-3. DOMAIN-FIRST HIERARCHY: Domain > Sub-domain > Specific Concept.
-4. NO NAME REPETITION: A child must never share its name with any ancestor. Flatten if found.
+        STRUCTURAL RULES:
+        1. ONTOLOGICAL STRUCTURE: Organize by WHAT a concept IS, not why it came up.
+        2. SIBLING ORTHOGONALITY: Siblings must be mutually exclusive. Merge overlapping siblings.
+        3. DOMAIN-FIRST HIERARCHY: Domain > Sub-domain > Specific Concept.
+        4. NO NAME REPETITION: A child must never share its name with any ancestor. Flatten if found.
 
-OUTPUT RULES:
-- ONLY output nodes that NEED changes. Omit already-correct nodes.
-- Do NOT re-output the entire tree — only the changed nodes.
+        OUTPUT RULES:
+        - ONLY output nodes that NEED changes. Omit already-correct nodes.
+        - Do NOT re-output the entire tree — only the changed nodes.
 
-ALL NODES:
-{full_tree_text}
-"""
-    # Issue 5 fix: derive target_nodes from node_map for guaranteed consistency
+        ALL NODES:
+        {full_tree_text}
+        """
     target_node_ids = [v.id for v in node_map.values() if v is not None]
     return apply_mapping(session, user_id, ai, prompt, system_prompt, target_node_ids, children_map=children_map, node_map=node_map)
 
@@ -852,6 +790,9 @@ NODES IN THIS BATCH:
 """
 
 def hnsw_leiden_cluster(embeddings, k_neighbors=15, target_size=400, max_cluster_size=500):
+    import igraph as ig
+    import leidenalg
+    from sklearn.neighbors import NearestNeighbors
     """
     Graph-based clustering via k-NN graph + Leiden community detection.
     Returns (labels, centroids) with the same interface as kmeans_cosine().
@@ -886,14 +827,9 @@ def hnsw_leiden_cluster(embeddings, k_neighbors=15, target_size=400, max_cluster
     G = ig.Graph(n=N, edges=edges, directed=False)
     G.es['weight'] = weights
     
-    # Binary search for optimal resolution:
-    # Goal: max cluster size stays close to target_size and under max_cluster_size.
-    # CPMVertexPartition works well with resolution in [0.0001, 0.5].
-    # Higher resolution → more, smaller clusters.
-    # Lower resolution → fewer, larger clusters.
     low, high = 0.0001, 0.5
     best_labels = None
-    best_score = float('inf')   # we want max_size as close to target_size as possible
+    best_score = float('inf') 
 
     for _ in range(8):
         res = (low + high) / 2
@@ -944,8 +880,7 @@ def hnsw_leiden_cluster(embeddings, k_neighbors=15, target_size=400, max_cluster
                     labels[idx[sub_labels == sub_l]] = cluster_id
                 else:
                     labels[idx[sub_labels == sub_l]] = next_label
-                    next_label += 1
-                    
+                    next_label += 1                    
     # Re-map labels to contiguous integers starting from 0
     unique_labels = np.unique(labels)
     label_map = {old: new for new, old in enumerate(unique_labels)}
@@ -1044,17 +979,17 @@ def run_relocation_batch_llm(batch_idx, batch_c, healthy_leaves, labels, node_ma
         problem_tree_text += build_branch_text(r, children_map=children_map, mem_count_map=mem_count_map) + "\n\n"
 
     context_note = f"""HIGHEST PRIORITY TASK: PROBLEM ROOT RELOCATION
-You MUST resolve the problem roots listed below by finding them a proper semantic home in the main ontology tree above.
-The previous tasks are secondary. Your main goal is moving, renaming, or merging the problem roots.
-Evaluate each problem root:
-  1. Should any of its children MOVE under an existing category shown above?
-  2. Should the root itself be RENAMED to something meaningful and remain a root?
-  3. Should the root MERGE into an existing category shown above?
-Do NOT keep a generic root name. If it must remain a root, give it a specific name.
-Do NOT elevate children to root level. Find them a proper parent.
+        You MUST resolve the problem roots listed below by finding them a proper semantic home in the main ontology tree above.
+        The previous tasks are secondary. Your main goal is moving, renaming, or merging the problem roots.
+        Evaluate each problem root:
+        1. Should any of its children MOVE under an existing category shown above?
+        2. Should the root itself be RENAMED to something meaningful and remain a root?
+        3. Should the root MERGE into an existing category shown above?
+        Do NOT keep a generic root name. If it must remain a root, give it a specific name.
+        Do NOT elevate children to root level. Find them a proper parent.
 
-PROBLEM ROOTS:
-{problem_tree_text}"""
+        PROBLEM ROOTS:
+        {problem_tree_text}"""
 
     prompt = REORG_PROMPT_TEMPLATE.format(tree_text=tree_text, context_note=context_note)
 
@@ -1069,6 +1004,7 @@ PROBLEM ROOTS:
 
 
 def kmeans_dedup_pass(session, user_id="default", children_map=None, node_map=None, mem_count_map=None):
+    from mindcache.Database.embedder import EmbeddingManager
     logger.info("\n PHASE 2: FLAT K-MEANS DEDUP (LARGE DB)")
     ai = SafeAI()
     embedder = EmbeddingManager()
@@ -1085,8 +1021,6 @@ def kmeans_dedup_pass(session, user_id="default", children_map=None, node_map=No
     # Build parent_map for _build_leaf_embed_text
     parent_map = {t.id: node_map.get(t.parent_id) for t in topics}
 
-    # 2. Build embeddings for leaves using Path + newest memories (up to 8000 Nomic tokens).
-    #    Reuse Topic.embedding cache where available — only re-embed leaves with no cached vector.
     to_embed = []
     leaf_vecs_map = {}  # leaf.id -> np.array
 
@@ -1120,13 +1054,8 @@ def kmeans_dedup_pass(session, user_id="default", children_map=None, node_map=No
     logger.info(f"  Leiden determined K={K} clusters.")
     similarity_matrix = np.dot(centroids, centroids.T)
 
+    BATCH_TOKEN_BUDGET = TOKEN_LIMIT 
 
-    # 4. Token-budget-aware proximity batching
-    # Target: fill each LLM batch to ~5000 tokens (TOKEN_LIMIT) from closest clusters first.
-    # This is fluid — a dense cluster may fill a batch by itself; sparse ones get packed together.
-    BATCH_TOKEN_BUDGET = TOKEN_LIMIT  # 5000 tokens (defined at top of file)
-
-    # Estimate token cost of each individual cluster (uses module-level _build_cluster_tree_text)
     cluster_token_cost = {}
     for c in range(K):
         txt = _build_cluster_tree_text({c}, leaves, labels, node_map, children_map, mem_count_map)
@@ -1233,7 +1162,6 @@ def cleanup_roots(session, user_id="default"):
             curr = node_map.get(curr.parent_id)
             
     # 1. Merge same-name roots (keep the one with most descendants)
-    # Use fuzzy normalization to catch plural/singular and whitespace variants
     name_groups = defaultdict(list)
     for r in roots:
         name_groups[normalize_topic_name(r.name)].append(r)
@@ -1265,60 +1193,13 @@ def cleanup_roots(session, user_id="default"):
         session.flush()
         logger.info(f"  Merged {merge_count} duplicate roots.")
         any_changes = True
-        
-    # 2. Identify problem roots (generic-named or tiny) — do NOT dissolve them.
-    # relocate_problem_roots() will handle them via LLM after this function returns.
-    session.expire_all()
-    # Rebuild topics and roots after merges
-    topics = session.query(Topic).filter(Topic.user_id == user_id).all()
-    node_map = {t.id: t for t in topics}
-    children_map = defaultdict(list)
-    for t in topics:
-        children_map[t.parent_id].append(t)
-    roots = [t for t in topics if t.parent_id is None]
-    
-    # Recalculate descendant counts
-    desc_count = {}
-    for node in topics:
-        desc_count[node.id] = 0
-    for node in topics:
-        curr = node_map.get(node.parent_id)
-        while curr:
-            desc_count[curr.id] = desc_count.get(curr.id, 0) + 1
-            curr = node_map.get(curr.parent_id)
-            
-    problem_count = 0
-    for r in roots:
-        d_count = desc_count.get(r.id, 0)
-        is_generic = r.name.lower().strip() in GENERIC_NAMES
-        is_tiny = d_count <= TINY_ROOT_THRESHOLD
-        if is_generic or is_tiny:
-            reason = "generic-named" if is_generic else f"tiny ({d_count} nodes)"
-            logger.info(f"  PROBLEM-ROOT: '{r.name}' (ID {r.id}) — {reason} — queued for LLM relocation")
-            problem_count += 1
-    if problem_count:
-        logger.info(f"  {problem_count} problem root(s) queued for relocate_problem_roots().")
-        
-    # 3. Mark tiny/generic roots as ungroomed so they surface in the next pass.
-    tiny_count = 0
-    for r in roots:
-        total_nodes = desc_count.get(r.id, 0)
-        if total_nodes <= TINY_ROOT_THRESHOLD or r.name.lower().strip() in GENERIC_NAMES:
-            r.is_groomed = 0
-            for desc in _get_all_descendants(r, children_map=children_map):
-                desc.is_groomed = 0
-            tiny_count += 1
-            logger.info(f"  TINY-ROOT: '{r.name}' (ID {r.id}, {total_nodes} nodes) marked ungroomed for future placement")
-            
-    if tiny_count > 0:
-        session.flush()
-        logger.info(f"  Marked {tiny_count} tiny roots as ungroomed.")
     
     session.commit()
     logger.info("[Root Cleanup] Complete.")
     return any_changes
 
 def relocate_problem_roots(session, user_id="default", node_map=None, children_map=None, mem_count_map=None):
+    from mindcache.Database.embedder import EmbeddingManager
     logger.info("\n PHASE 3: RELOCATE PROBLEM ROOTS")
     ai = SafeAI()
     embedder = EmbeddingManager()
@@ -1498,7 +1379,6 @@ def relocate_problem_roots(session, user_id="default", node_map=None, children_m
 def split_overloaded_leaves(session, user_id="default", max_limit=100):
     from sklearn.cluster import KMeans
     from mindcache.Database.embedder import EmbeddingManager
-    from pydantic import BaseModel, Field
 
     class ClusterNaming(BaseModel):
         cluster_index: int = Field(description="The index of the cluster (1-based index corresponding to the prompt).")
@@ -1643,7 +1523,6 @@ def split_overloaded_leaves(session, user_id="default", max_limit=100):
                 for m in cluster_memories[cluster_idx]:
                     m.topic_id = new_topic.id
                     moved_count += 1
-                    
                 logger.info(f"      Created {sub.placement} '{new_topic.name}' (ID {new_topic.id}) with {moved_count} memories.")
                 
             if all_sibling_placements:
@@ -1664,7 +1543,6 @@ def reorganize_tree(user_id="default", dry_run=True):
         split_overloaded_leaves(session, user_id=user_id, max_limit=100)
 
         # 1. Build in-memory maps FIRST — avoids N+1 ORM queries and guarantees
-        #    that full_tree_text, children_map, and node_map are all consistent snapshots.
         children_map = defaultdict(list)
         topic_by_id = {None: None}
         topics = session.query(Topic).filter(Topic.user_id == user_id).all()
@@ -1698,7 +1576,7 @@ def reorganize_tree(user_id="default", dry_run=True):
             if pass_changed:
                 changed = True
 
-        cleanup_changed = cleanup_roots(session, user_id=user_id)  # Merges same-name duplicates and marks problem roots
+        cleanup_changed = cleanup_roots(session, user_id=user_id)
         if cleanup_changed:
             changed = True
 

@@ -1,49 +1,119 @@
-# Python junk
+# ============================================================
+#  MindCache — .gitignore
+#  Keep this repo clean: no models, no data dumps, no caches.
+# ============================================================
+
+# ── Python ──────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-venv/
-.env
-.DS_Store
+*.pyo
+*.pyd
+*.so
 
-# AI Models (Don't upload large model files!)
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Environment variable files
+.env
+.env.*
+
+# Build / packaging artefacts
+*.egg-info/
+dist/
+build/
+*.egg
+MANIFEST
+
+# Type-checker / test caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+htmlcov/
+.coverage
+coverage.xml
+
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── IDE / Editor ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── AI / ML Models (never commit large binary files!) ────────
 *.gguf
 *.bin
-*.json
-*.wav
-*.png
+*.onnx
+*.pt
+*.pth
+*.safetensors
 .model_cache/
-*.jpg
-models/
-LLM_CHATS/
-retrieval/cache/
 hf_cache/
+models/
 
-# database
-.db
-
-# Generated retrieval cache (binary, re-built by background scheduler)
+# ── Caches & generated indexes ───────────────────────────────
 cache/
 *.pkl
-# Databases
+
+# ── Databases ────────────────────────────────────────────────
 *.db
 *.sqlite
 *.sqlite3
-
-# WAL/shm
 *.db-wal
 *.db-shm
 
-# Data files
-*.parquet
+# ── BEAM dataset files (large parquet + raw JSON dumps) ──────
+BEAM/
+# Exception: small helper scripts inside BEAM/ are OK to commit
+# Use: git add -f BEAM/data.py  (or similar) to force-add them
 
-# Chat exports
+# ── Scratch / dev workspace ───────────────────────────────────
+scratch/
+
+# ── Blog / writeup working files ──────────────────────────────
+Blog Files/
+
+# ── Evaluation result outputs ────────────────────────────────
+# Raw JSON result files are large and reproducible; exclude them.
+results/
+eval/results/
+*.results.json
+*_results.json
+
+# ── Config overrides (may contain secrets / local paths) ─────
+config/
+
+# ── Data exports ─────────────────────────────────────────────
+*.parquet
+*.wav
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# ── Chat / memory exports ────────────────────────────────────
 LLM_CHATS/
 
-# Recovery/backups
+# ── Recovery / backup dirs ───────────────────────────────────
 recovery_backups/
 useless/
 
-# Retrieval cache
-retrieval/cache/
-BEAM/1M-00000-of-00001.parquet
-config/
+# ── MindCache internal runtime state ─────────────────────────
+# These are auto-generated at runtime and should not be committed
+mindcache/**/.root_orthogonality_state.json
+.root_orthogonality_state.json
+
+# ── Misc logs / temp files ───────────────────────────────────
+*.log
+*.tmp
+*.bak
+*.orig
+ingest_stats.txt

@@ -43,6 +43,8 @@ class MindCache:
             os.environ["MINDCACHE_DB_PATH"] = db_path
             from mindcache.Database.db_setup import reconfigure_engine
             reconfigure_engine(db_path)
+            from mindcache.retrieval.root_cache import refresh_tree_cache
+            refresh_tree_cache()
         if gemini_api_key:
             os.environ["GEMINI_API_KEY"] = gemini_api_key
             os.environ["GEMINI_API_KEYS"] = gemini_api_key
@@ -93,11 +95,144 @@ class MindCache:
         finally:
             session.close()
 
-    def process_queue(self, user_id: str = "default", limit: int = None, max_retries: int = 5) -> dict:
+    def _consolidate_jobs(self, user_id: str = "default", max_tokens: int = 4000) -> int:
+        """
+        DB-level pre-step: merge small pending jobs for `user_id` into larger
+        ProcessingJob rows, then delete the originals atomically in one commit.
+
+        Token count: len(text) // 4  (4 characters = 1 token).
+
+        Only 'pending' jobs are eligible. Jobs already at or above max_tokens on
+        their own are left untouched. Single-job batches are never merged.
+
+        Returns the number of original jobs consumed (deleted) by merging.
+        """
+        max_chars = max_tokens * 4  # 1 token = 4 characters
+
+        session = self.Session()
+        try:
+            pending = (
+                session.query(ProcessingJob)
+                .filter(
+                    ProcessingJob.status == "pending",
+                    ProcessingJob.user_id == user_id,
+                )
+                .order_by(ProcessingJob.timestamp, ProcessingJob.id)
+                .all()
+            )
+
+            if not pending:
+                return 0
+
+            # Greedy grouping by character budget
+            batches: list = []
+            current_parts: list = []
+            current_ids: list = []
+            current_turn_ids: list = []
+            current_chars: int = 0
+            current_timestamp = None
+
+            for job in pending:
+                ts_str = job.timestamp.strftime("%Y-%m-%d %H:%M") if job.timestamp else "unknown"
+                block = f"[{ts_str}]\n{job.raw_prompt}"
+                block_chars = len(block)
+
+                if current_chars + block_chars > max_chars and current_parts:
+                    batches.append({
+                        "parts":     list(current_parts),
+                        "ids":       list(current_ids),
+                        "turn_ids":  list(current_turn_ids),
+                        "timestamp": current_timestamp,
+                    })
+                    current_parts.clear()
+                    current_ids.clear()
+                    current_turn_ids.clear()
+                    current_chars = 0
+                    current_timestamp = None
+
+                current_parts.append(block)
+                current_ids.append(job.id)
+                current_chars += block_chars
+                # Parse the stored JSON string into a list and accumulate
+                try:
+                    ids_for_job = json.loads(job.turn_ids) if job.turn_ids else []
+                except (ValueError, TypeError):
+                    ids_for_job = []
+                current_turn_ids.extend(ids_for_job)
+                if current_timestamp is None:
+                    current_timestamp = job.timestamp
+
+            if current_parts:
+                batches.append({
+                    "parts":     list(current_parts),
+                    "ids":       list(current_ids),
+                    "turn_ids":  list(current_turn_ids),
+                    "timestamp": current_timestamp,
+                })
+
+            # Only merge batches that contain more than one original job
+            total_consumed = 0
+            for batch in batches:
+                if len(batch["ids"]) <= 1:
+                    continue  # Already a single job — leave untouched
+
+                merged_prompt = "\n\n".join(batch["parts"])
+                merged_turn_ids = json.dumps(batch["turn_ids"])
+                
+                session.query(ProcessingJob).filter(
+                    ProcessingJob.id.in_(batch["ids"])
+                ).delete(synchronize_session=False)
+                session.flush()
+
+                # NOW insert the merged job (gets the next-highest id)
+                merged = ProcessingJob(
+                    raw_prompt=merged_prompt,
+                    turn_ids=merged_turn_ids,
+                    status="pending",
+                    timestamp=batch["timestamp"],
+                    user_id=user_id,
+                )
+                session.add(merged)
+                session.flush()  # Materialise the new id before the next batch
+
+                total_consumed += len(batch["ids"])
+
+            if total_consumed:
+                session.commit()
+                logger.info(
+                    f"[MindCache] Consolidated {total_consumed} small jobs for user '{user_id}' "
+                    f"(≤{max_tokens} tokens / {max_chars} chars per job)"
+                )
+
+            return total_consumed
+
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"[MindCache] Job consolidation failed (originals left intact): {e}")
+            return 0
+        finally:
+            session.close()
+
+
+    def process_queue(
+        self,
+        user_id: str = "default",
+        limit: int = 30,
+        max_retries: int = 5,
+        consolidation_max_tokens: int = 4000,
+    ) -> dict:
         """
         Run the memory extraction pipeline on queued jobs for a specific user.
-        Processes up to `limit` jobs.
+
+        Flow:
+          1. Consolidate ALL small pending jobs into larger DB rows (pre-step, no limit).
+          2. Fetch up to `limit` jobs from the now-consolidated queue.
+          3. Embed + extract + save each job (original per-job logic, unchanged).
         """
+        # --- Step 1: DB-level consolidation (runs before limit fetch) ---
+        self._consolidate_jobs(user_id=user_id, max_tokens=consolidation_max_tokens)
+
+        # --- Step 2: Fetch jobs (after consolidation) ---
         try:
             session = self.Session()
             try:
@@ -105,37 +240,35 @@ class MindCache:
                     ProcessingJob.status.in_(["processing", "pending", "failed"]),
                     ProcessingJob.retry_count < max_retries,
                     ProcessingJob.user_id == user_id
-                ).order_by(ProcessingJob.id)
-                
-                if limit:
-                    query = query.limit(limit)
-                pending_jobs = query.all()
-                
+                ).order_by(ProcessingJob.id).all()
+
+                pending_jobs = query[:limit]
+
                 if not pending_jobs:
                     logger.info(f"[MindCache] No pending jobs in the queue for user '{user_id}'.")
                     return {"success": 0, "failed": 0}
-                
-                # Pre-compute query embeddings for the batch
+
+                # Pre-compute embeddings for the fetched batch
                 from mindcache.Database.embedder import _batch_embed_pending_jobs
                 _batch_embed_pending_jobs(pending_jobs, self.db_manager._get_embedder())
-                
+
                 # Refresh session to load embeddings
                 session.expire_all()
-                
-                # Detach pending jobs data and close session immediately to avoid transaction locking contention
+
+                # Detach data and close session to avoid transaction locking contention
                 jobs_data = []
                 for job in pending_jobs:
                     jobs_data.append({
-                        "id": job.id,
+                        "id":         job.id,
                         "raw_prompt": job.raw_prompt,
-                        "embedding": job.embedding,
-                        "timestamp": job.timestamp
+                        "embedding":  job.embedding,
+                        "timestamp":  job.timestamp,
                     })
             finally:
                 session.close()
         except Exception as e:
             raise IngestionError(f"Failed to retrieve pending jobs from queue: {e}") from e
-            
+
         from mindcache.Database.db_setup import TriadBlock
         _snap_sess = self.Session()
         try:
@@ -143,16 +276,18 @@ class MindCache:
         finally:
             _snap_sess.close()
 
+        # --- Step 3: Process each job (original per-job logic, unchanged) ---
         success = 0
         failed = 0
         for job_data in jobs_data:
             job_id = job_data["id"]
             try:
-                # Run memory extraction
-                extracted_data = self.extractor.memory_extract(job_data["raw_prompt"], query_embedding=job_data["embedding"])
-                
+                extracted_data = self.extractor.memory_extract(
+                    job_data["raw_prompt"],
+                    query_embedding=job_data["embedding"]
+                )
+
                 if not extracted_data:
-                    # Open a short-lived session to mark job as failed
                     sess = self.Session()
                     try:
                         job = sess.query(ProcessingJob).get(job_id)
@@ -164,8 +299,7 @@ class MindCache:
                         sess.close()
                     failed += 1
                     continue
-                
-                # Save extracted memories (this opens and manages its own session)
+
                 self.db_manager.save_extracted_memory(
                     job_id=job_id,
                     raw_msg=job_data["raw_prompt"],
@@ -176,7 +310,6 @@ class MindCache:
                 success += 1
             except Exception as e:
                 logger.error(f"[MindCache Error] Job {job_id} failed: {e}")
-                # Open a short-lived session to mark job as failed
                 sess = self.Session()
                 try:
                     job = sess.query(ProcessingJob).get(job_id)
@@ -187,7 +320,8 @@ class MindCache:
                 finally:
                     sess.close()
                 failed += 1
-        
+
+
         # Run decision analyzer to update decision statuses
         if success > 0:
             logger.info(f"[MindCache] Running decision state analyzer for user '{user_id}'...")
@@ -301,16 +435,31 @@ class MindCache:
                 
         return {"success": success, "failed": failed}
 
-    def search(self, query: str, user_id: str = "default", top_k_corpus: int = 30) -> str:
+    def search(self, query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = True) -> str:
         """
         Search for memories matching a query.
         Returns the formatted context string ready to inject into the LLM system prompt.
+
+        Args:
+            query:        The query string to search for.
+            user_id:      The user ID to scope the search to.
+            top_k_corpus: Number of candidates to consider per memory type before reranking.
+            use_reranker: If True (default), applies the Jina v2 cross-encoder reranker
+                          (Phase 3 + Phase 6).  Set to False to skip reranking and fall
+                          back to pure RRF score ordering — faster but less precise.
         """
         try:
-            result = self.retriever.retrieve(query, user_id=user_id, top_k_corpus=top_k_corpus, include_summaries=self.enable_summarization)
+            result = self.retriever.retrieve(
+                query,
+                user_id=user_id,
+                top_k_corpus=top_k_corpus,
+                include_summaries=self.enable_summarization,
+                use_reranker=use_reranker,
+            )
             return result.context
         except Exception as e:
             raise RetrievalError(f"Search failed: {e}") from e
+
 
     def get_all(self, user_id: str = "default", memory_type: str = None) -> list[dict]:
         """
