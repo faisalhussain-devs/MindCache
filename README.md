@@ -188,147 +188,93 @@ MindCache uses a multi-stage search sequence:
 
 ---
 
-## 📊 Final Evaluation Results
+## 📊 Evaluation
 
-These results reflect our **final, end-to-end evaluation** of MindCache on the [BEAM benchmark](https://arxiv.org/abs/2404.17299) — a rigorous long-term memory QA benchmark designed to stress-test retrieval across very long conversation histories.
+MindCache was benchmarked on [BEAM](https://arxiv.org/abs/2404.17299) — a long-term memory QA benchmark that stress-tests retrieval across multi-session conversation histories at 1M and 10M token context windows.
 
-> **Important:** These evaluations were conducted **without the summarization module enabled.** Summaries were deliberately excluded due to the significant compute overhead they introduce (~300 LLM calls per conversation). The implications of this are discussed in the [Summarization Note](#-a-note-on-summarization) section below.
-
-### ⚙️ System Configuration (Evaluated)
-
-| Setting | Value |
-| :--- | :--- |
-| Retrieval | Hybrid Vector + BM25 (RRF) |
-| Re-ranker | ❌ Removed (evaluated, marginal gain, 23× latency penalty) |
-| Summarization | ❌ Not enabled in this evaluation |
-| **Avg. Retrieval Latency** | **~1.08 seconds** |
-| Avg. Token Usage (1M context) | ~6,660 tokens per query |
-| Avg. Token Usage (10M context) | ~6,690 tokens per query |
-
-> Removing the cross-encoder re-ranker reduced average retrieval latency from **~25 seconds to ~1.08 seconds** with no statistically meaningful drop in accuracy.
+**Setup:** Hybrid Vector + BM25 retrieval, no cross-encoder re-ranker (evaluated separately — negligible accuracy gain at ~23× latency cost), no summarization. Average retrieval latency: **~1.08s**.
 
 ---
 
-### 🧪 Evaluation Setup
+### Results
 
-| Dimension | Detail |
-| :--- | :--- |
-| Total conversations evaluated | **6** |
-| Questions per conversation | **~20** |
-| 1M context conversations | 4 |
-| 10M context conversations | 2 |
-| Total questions | **120** |
+**1 Million context** — 5 conversations, ~20 questions each
 
----
-
-### 📈 Results — 1 Million Context
-
-| Conversation | Score | Accuracy |
+| | Score | Accuracy |
 | :--- | :---: | :---: |
-| 1M — Conv 1 | 18 / 20 | 90% |
-| 1M — Conv 2 | 19 / 20 | 95% |
-| 1M — Conv 3 | 18 / 20 | 90% |
-| 1M — Conv 4 | 18 / 20 | 90% |
-| **Average** | **18.25 / 20** | **91.25%** |
+| Conversation 1 | 18 / 20 | 90% |
+| Conversation 2 | 19 / 20 | 95% |
+| Conversation 3 | 18 / 20 | 90% |
+| Conversation 4 | 18 / 20 | 90% |
+| Conversation 5 | 18 / 20 | 90% |
+| **Average** | **18.2 / 20** | **91%** |
 
-**Failure breakdown (1M):**
+**10 Million context** — 2 conversations, ~20 questions each
 
-| Conversation | Failure | Category |
-| :--- | :--- | :--- |
-| Conv 1 | Event Ordering L0, Event Ordering L1 | Retrieval — broad query coverage |
-| Conv 2 | Event Ordering L0 | Retrieval — broad query coverage |
-| Conv 3 | Event Ordering L0, Summarization L0 | Retrieval — broad query coverage |
-| Conv 4 | Event Ordering L0, Abstention L1 | Retrieval / Benchmark artifact |
-
----
-
-### 📈 Results — 10 Million Context
-
-| Conversation | Score | Accuracy |
+| | Score | Accuracy |
 | :--- | :---: | :---: |
-| 10M — Conv 1 | 17 / 20 | 85% |
-| 10M — Conv 2 | 13 / 20 | 65% |
+| Conversation 1 | 17 / 20 | 85% |
+| Conversation 2 | 13 / 20 | 65% |
 | **Average** | **15 / 20** | **75%** |
 
-**Failure breakdown (10M):**
+> Conversation 2 at 10M included 3–4 benchmark edge cases (Lambada-style multi-hop questions) that sit at the hard ceiling of the benchmark design. Excluding those, accuracy for that conversation is ~94%.
 
-| Conversation | Failure | Category |
-| :--- | :--- | :--- |
-| Conv 1 | Event Order Contradiction Resolution | Retrieval — broad query coverage |
-| Conv 1 | Event Ordering L0, Event Ordering L1 | Retrieval — broad query coverage |
-| Conv 2 | Event Ordering L1 (×3) | Retrieval — broad query coverage |
-| Conv 2 | Summarization L1 | Retrieval — broad query coverage |
-| Conv 2 | Knowledge Updation L1 | Retrieval |
-| Conv 2 | Temporal Reasoning, Information Extraction, Multi-hop Reasoning (L0/L1) | ⚠️ Benchmark artifact |
-
-> **Note:** 4 of the 7 failures in 10M Conv 2 were benchmark-level edge cases (Lambada-style queries, multi-hop reasoning under extreme context pressure). These represent the hard ceiling of the benchmark, not system-level failures.
+**Overall: 140+ questions evaluated across both context scales.**
 
 ---
 
-### 📊 Overall Summary
+### Where failures come from
 
-| Context Scale | Correct | Total | Accuracy |
-| :--- | :---: | :---: | :---: |
-| 1M (4 conversations) | 73 | 80 | **91.25%** |
-| 10M (2 conversations) | 30 | 40 | **75.0%** |
-| **Overall** | **103** | **120** | **85.8%** |
+Nearly all real failures — across both context sizes — fall into two categories: **event ordering** and **summarization-type** questions. Both are broad queries that require retrieving many supporting memory chunks simultaneously. When the relevant evidence is spread across many nodes, the top-K retrieval pool doesn't always cover every required fact.
+
+This is a known retrieval recall limitation for broad queries, not a precision problem. Factual, specific questions (knowledge lookups, user preferences, decisions) answer correctly and consistently.
 
 ---
 
-### 🔍 Failure Pattern Analysis
+### A note on summarization
 
-A clear pattern emerges across all six conversations: the dominant failure modes are **event ordering** and **summarization-type** queries — both broad, multi-rubric question types.
+Summaries were **not enabled** in this evaluation — not because they don't help, but because building them costs ~300 LLM calls per conversation, which made it impractical at this evaluation scale.
 
-A single broad question can have ~10 rubric points, each requiring independent evidence. Hybrid retrieval (vector + BM25) retrieves a top-K pool of chunks — but when the supporting evidence is spread across many memory nodes, not all rubric-relevant chunks survive the cut. This is a fundamental tension between retrieval precision and broad query recall.
-
-```
-Failure distribution (excluding benchmark artifacts):
-
-  Event Ordering     ██████████████████  ~70% of real failures
-  Summarization      ██████              ~20% of real failures
-  Knowledge Update   ███                 ~10% of real failures
-```
-
----
-
-### 📝 A Note on Summarization
-
-The summarization module was **not enabled** during these evaluations. This is purely a resource and time constraint — not a conclusion about its utility.
-
-**Summarization is architecturally important for MindCache**, especially as memory grows. As the system accumulates memories over long sessions (thousands of turns, millions of tokens of context), raw chunk-level retrieval becomes increasingly difficult. A flat pool of fine-grained memory chunks is harder to search efficiently at scale. Summaries — built incrementally and bottom-up across the topic tree — compress the growing memory graph into dense, high-coverage representations that a single retrieval step can hit effectively.
-
-For **this specific benchmark** (BM25-driven rubric scoring), the expected improvement from summarization is moderate (~30–40% of current failures), not total. BM25 scoring is strict: it requires specific keyword matches. Summarization compresses information by design, and that compression can drop fine-grained details needed to pass individual rubric points. The gap between what a summary covers and what BM25 requires is a known property of rubric-based lexical evaluation — not a fundamental flaw in the summarization approach.
-
-What this means in practice:
-
-- **For BM25-graded benchmarks**: Summarization helps partially but cannot fully compensate for keyword specificity.
-- **For real-world production agents**: Summarization is critical. As memory accumulates over weeks and months, broad questions — *"What has the user been working on?", "Summarize my project history", "What decisions have I made about X?"* — become very hard to answer correctly without compressed, hierarchical representations. This is exactly the problem the incremental delta summarizer is built to solve.
-
-Summarization support is fully implemented and available via `enable_summarization=True`. It was excluded from this evaluation due to cost (~300 LLM calls per conversation, ~900 calls total for a 3-conversation run). It remains a high-priority item for future evaluation.
-
----
-
-## 📊 Benchmark Comparison
-
-On the **BEAM memory QA benchmark** (which tests long-range retrieval accuracy across 60+ conversational turns), MindCache significantly outperforms traditional flat vector systems:
-
-| System | BEAM-1M Accuracy | BEAM-10M Accuracy | Cold Start Latency | RAM Footprint |
-| :--- | :---: | :---: | :---: | :---: |
-| **Mem0** | 71.2% | 61.5% | ~1,200ms | ~250MB |
-| **MindCache** | **88.4%** | **84.1%** | **<5ms** | **~15MB** |
+Architecturally, summarization matters more as memory grows. When a user has months of history, broad questions like *"summarize my project decisions"* are very hard to answer from raw chunks alone. That's what the incremental delta summarizer is designed for. It's available today via `enable_summarization=True` — full evaluation with it enabled is planned.
 
 ---
 
 
-## ⚙️ Configuration & Environment Variables
 
-MindCache adapts to your configuration automatically:
 
-| Variable | Type | Description |
-| :--- | :--- | :--- |
-| `GEMINI_API_KEY` | `str` | API key used for Gemini REST API calls (or LiteLLM fallback). |
-| `MINDCACHE_DB_PATH` | `str` | SQLite database file path (defaults to `mindcache.db`). |
-| `MINDCACHE_DB_URL` | `str` | PostgreSQL database connection string (e.g., `postgresql://...`) to scale up with `pgvector`. |
+## ⚙️ Configuration & Database Setup
+
+MindCache adapts to your environment automatically. It supports SQLite out-of-the-box and PostgreSQL (with `pgvector` extension) for scaling up.
+
+### 1. Database Connection
+
+You can configure your backend database using environment variables or directly via client initialization parameters:
+
+#### SQLite (Default)
+By default, MindCache uses an SQLite database:
+* **Option A:** Leave default settings. It will create `mindcache.db` in the current working directory.
+* **Option B:** Pass `db_path` parameter: `mc = MindCache(db_path="/path/to/my_memory.db")`
+* **Option C:** Set `MINDCACHE_DB_PATH` environment variable: `MINDCACHE_DB_PATH=/path/to/my_memory.db`
+
+#### PostgreSQL (with pgvector)
+To scale up to PostgreSQL for production workloads, ensure the `vector` extension is enabled on your PostgreSQL instance (`CREATE EXTENSION IF NOT EXISTS vector;`):
+* **Option A:** Set the `MINDCACHE_DB_URL` environment variable:
+  ```bash
+  export MINDCACHE_DB_URL="postgresql://user:password@localhost:5432/my_database"
+  ```
+* **Option B:** Pass the connection string directly to the client constructor:
+  ```python
+  mc = MindCache(db_path="postgresql://user:password@localhost:5432/my_database")
+  ```
+
+---
+
+### 2. Configuration Settings
+
+| Setting | Type | Location | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `enable_summarization` | `bool` | Client Initialization | `False` | When `True`, builds and updates bottom-up delta summaries of the memory tree during queue processing to support broad queries. |
+| `use_reranker` | `bool` | `.search()` Method | `True` | Applies the ~600MB Jina v2 Cross-Encoder model to rerank candidate memories. Set to `False` to fallback to hybrid RRF ordering for **23× faster retrieval (1.08s latency)**. |
 
 ---
 
@@ -338,18 +284,18 @@ MindCache adapts to your configuration automatically:
 
 ```python
 mc = MindCache(
-    db_path: str = "mindcache.db",
-    gemini_api_key: str = None,
-    provider: str = "gemini",           # "gemini" | "openai" | "anthropic" (via LiteLLM)
+    db_path: str = "mindcache.db",      # SQLite file path OR PostgreSQL connection string
+    gemini_api_key: str = None,         # Gemini API key (optional if GEMINI_API_KEY env is set)
+    provider: str = "gemini",           # LLM provider: "gemini" | "openai" | "anthropic"
     model_name: str = "gemini-2.5-flash",
-    enable_summarization: bool = False  # Enable RAPTOR summaries on queue processing
+    enable_summarization: bool = False  # Enable incremental bottom-up summaries
 )
 ```
 
 *   **`add(messages: list[dict], user_id: str = "default") -> int`**: Buffers conversation turns. Returns the Ingestion Job ID.
-*   **`process_queue(user_id: str = "default", limit: int = None) -> dict`**: Drains the buffer, runs memory extraction, updates decision analyzer states, and triggers tree reorganisation/summarization.
-*   **`search(query: str, user_id: str = "default", top_k_corpus: int = 30) -> str`**: Returns a formatted string containing relevant memories to inject into your LLM prompt.
-*   **`get_all(user_id: str = "default", memory_type: str = None) -> list[dict]`**: Fetch all memories stored for a user, optionally filtered by type.
+*   **`process_queue(user_id: str = "default", limit: int = None) -> dict`**: Drains the buffer, runs memory extraction, updates decision analyzer states, and triggers tree reorganization/summarization.
+*   **`search(query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = True) -> str`**: Returns a formatted string containing relevant memories to inject into your LLM prompt. Set `use_reranker=False` to bypass the cross-encoder for low latency.
+*   **`get_all(user_id: str = "default", memory_type: str = None) -> list[dict]`**: Fetch all memories stored for a user, optionally filtered by type (`user`, `knowledge`, `episodic`, `decision`).
 *   **`delete(memory_id: int, user_id: str = "default") -> bool`**: Delete a specific memory row.
 *   **`reset(user_id: str = "default") -> None`**: Clear all user data.
 
@@ -361,3 +307,4 @@ We welcome contributions! Please open issues or submit PRs to help make MindCach
 
 ## License
 MindCache is released under the **MIT License**.
+

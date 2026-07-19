@@ -4,65 +4,25 @@ eval/eval_beam_e2e.py — End-to-End BEAM Evaluation for MindCache
 
 PURPOSE
 -------
-This script is the complete, self-contained evaluation pipeline for testing
-MindCache against a BEAM (Benchmark for Evaluating long-context AI Memory)
-conversation dataset.
+This script is the complete evaluation pipeline for testing MindCache against a
+BEAM (Benchmark for Evaluating long-context AI Memory) conversation dataset,
+leveraging the public MindCache library SDK.
 
 It runs three sequential stages in one command:
 
   Stage 1 │ adapt_beam      — Convert a BEAM parquet → MindCache JSON format
-  Stage 2 │ ingest_adapted  — Queue + run memory extraction into the local DB
+  Stage 2 │ ingest_adapted  — Queue + run memory extraction using MindCache client
   Stage 3 │ eval_retrieval  — Run retrieval over all test questions, save results
-
-HOW TO USE
-----------
-1. Install MindCache:
-       pip install -e .
-
-2. Download a BEAM parquet from HuggingFace:
-       https://huggingface.co/datasets/ServiceNow/BEAM
-
-3. Set your Gemini API key (needed for Stage 2 memory extraction):
-       set GEMINI_API_KEY=your-key-here      (Windows)
-       export GEMINI_API_KEY=your-key-here   (Linux/macOS)
-
-4. Run the full pipeline:
-       python eval/eval_beam_e2e.py \\
-           --parquet    BEAM/1M-00000-of-00001.parquet \\
-           --conv-index 7 \\
-           --db-path    mindcache.db \\
-           --output-dir results/
-
-ARGUMENTS
----------
-  --parquet       Path to the BEAM .parquet file
-  --conv-index    0-based row index of the conversation to evaluate (default: 7)
-  --db-path       Path where the MindCache SQLite DB will be created/reset
-  --output-dir    Directory to write the result JSON (default: results/)
-  --user-id       User ID for the memory tree (default: "default")
-  --adapted-json  Override path for the intermediate adapted JSON file
-  --skip-ingest   Skip Stages 1 & 2, jump straight to retrieval (DB already populated)
-  --limit         Only evaluate the first N questions (quick smoke test)
-
-QUICK SMOKE TEST (5 questions, no full ingest needed with --skip-ingest):
-       python eval/eval_beam_e2e.py --skip-ingest --adapted-json my_adapted.json --limit 5
-
-OUTPUT
-------
-  results/beam_conv<ID>_results.json
-  One entry per question: question_id, question_type, detected_type, question,
-  expected, rubric, system_prompt, retrieved_context, retrieval_latency
 """
 
 import json
 import argparse
 import sys
 import os
-import re as _re
 import time
 import logging
-import subprocess
 from datetime import datetime
+from mindcache import MindCache
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,110 +33,6 @@ log = logging.getLogger("eval_beam_e2e")
 
 # Allow running from repo root or from eval/ subdirectory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Ingestion constants & helpers  (self-contained, no ingest_api dependency)
-# ─────────────────────────────────────────────────────────────────────────────
-
-TOKEN_BUDGET   = 4_000   # max tokens per ingestion job
-CHARS_PER_TOKEN = 4      # rough chars-per-token estimate
-
-# System prompt used by the memory extractor during BEAM ingestion
-_EVAL_SYSTEM_PROMPT = """\
-You are the MindCache Extraction Engine running in EXHAUSTIVE MODE.
-
-Your goal: REPRODUCE all substantive content from this conversation as structured memory entries.
-This is NOT summarization. You must capture every piece of information, no matter the domain.
-
-### INPUT FORMAT
-The conversation is presented as alternating turns prefixed with "User:" and "Assistant:".
-A "Timestamp:" header marks the session date. Extract from BOTH sides.
-- User-stated details: prefix with "User-stated (fact): "
-- LLM-suggested (unverified): prefix with "LLM-suggested (unverified by user): "
-
-### RULES
-**"reasoning"** → lightweight planning step. List key sub-topics and memory types needed.
-**"topics_root"** → 1-2 high-level domains, e.g. ["Sleep Science"] or ["Machine Learning"].
-**"topics_branch"** → sub-path within topics_root. Domain > Sub-domain > Specific Concept.
-**"memory"** → one bucket per sub-topic. ALL content goes here.
-
-### WHAT TO EXTRACT
-[FACT] — Most important. Capture every definition, fact, number, procedure, recommendation,
-         correction, comparison, research finding, tool, and product mentioned.
-         Prefix user-stated facts with "User-stated (fact): ".
-         Prefix LLM-suggested unverified facts with "LLM-suggested (unverified by user): ".
-         Target: at least 3 fact entries per turn pair. No upper limit.
-[USER] — Every preference, instruction, personal context, biographical fact, relationship.
-[EPIS] — What was discussed and how the conversation progressed.
-[DECISION] — Only meaningful choices with lasting impact.
-
-### WHAT TO STRIP
-Filler: "ok", "thanks", "I see", greetings, meta-conversation.
-
-### WRITING STYLE
-Retrieval-friendly: each entry must stand alone. Include all specifics inline.
-Preserve ALL numbers, dates, names, technical terms, and proper nouns.
-
-### OUTPUT
-Valid JSON matching the ChatExtraction schema.
-"""
-
-
-def _clean_text(text: str) -> str:
-    """Sanitize raw BEAM content — prevents LLM token repetition loops."""
-    text = text.replace('\t', ' ')
-    text = _re.sub(r'\n{3,}', '\n\n', text)
-    text = _re.sub(r' {3,}', ' ', text)
-    return text.strip()
-
-
-def _normalize_for_ratio(text: str) -> str:
-    text = text.replace('\t', ' ').replace('\n', ' ')
-    return _re.sub(r' {2,}', ' ', text).strip()
-
-
-def _estimate_tokens(text: str) -> int:
-    return len(text) // CHARS_PER_TOKEN
-
-
-def _format_session_text(session: dict) -> str:
-    lines = ["Timestamp: " + str(session["timestamp"])]
-    for turn in session["content"]:
-        role = turn.get("role", "unknown").capitalize()
-        lines.append(f"{role}: {_clean_text(turn.get('content', ''))}")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _format_turns_text(turns: list, timestamp: str) -> str:
-    lines = ["Timestamp: " + str(timestamp)]
-    for turn in turns:
-        role = turn.get("role", "unknown").capitalize()
-        lines.append(f"{role}: {_clean_text(turn.get('content', ''))}")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _partition_text(text: str, target_chars: int = 4000) -> list:
-    """
-    Partition a conversation log into ~target_chars chunks of complete
-    (User, Assistant) turn pairs. Used for multi-vector embedding.
-    """
-    from mindcache.Database.db_manager import DatabaseManager
-    clean = DatabaseManager._strip_timestamps(text)
-    lines = clean.split("\n")
-
-    chunks, current, current_len = [], [], 0
-    for line in lines:
-        current.append(line)
-        current_len += len(line) + 1
-        if current_len >= target_chars and line.lower().startswith("assistant:"):
-            chunks.append("\n".join(current))
-            current, current_len = [], 0
-    if current:
-        chunks.append("\n".join(current))
-    return [c for c in chunks if c.strip()]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -322,319 +178,50 @@ def adapt_beam(parquet_path: str, output_path: str, conv_index: int = 7) -> dict
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 2 — Ingest adapted JSON into MindCache DB
+# Stage 2 — Ingest adapted JSON using the MindCache Library
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _save_job(db_session, batch_texts, batch_meta):
-    """Persist a batch of session text as a ProcessingJob row."""
-    from mindcache.Database.db_setup import ProcessingJob
-
-    if isinstance(batch_meta, list):
-        ids = [m["id"] for m in batch_meta]
-        ts  = next((m["timestamp"] for m in batch_meta if m.get("timestamp")), None)
-    else:
-        ids = batch_meta.get("id", [])
-        ts  = batch_meta.get("timestamp")
-
-    timestamp = None
-    if ts:
-        for fmt in ("%B-%d-%Y", None):
-            try:
-                timestamp = datetime.strptime(ts, fmt) if fmt else datetime.fromisoformat(ts)
-                break
-            except Exception:
-                continue
-
-    prompt_text = "\n".join(batch_texts) if isinstance(batch_texts, list) else batch_texts
-    job = ProcessingJob(
-        raw_prompt     = prompt_text,
-        raw_response   = json.dumps(batch_meta),
-        raw_next_prompt= json.dumps(ids),
-        status         = "pending",
-        timestamp      = timestamp,
-    )
-    db_session.add(job)
-    db_session.flush()
-
-
-def _create_jobs(adapted_data: dict, db_path: str):
+def ingest_adapted(adapted_data: dict, db_path: str, user_id: str = "default"):
     """
-    Batch sessions from the adapted JSON into ProcessingJob rows.
-    Resets the DB first (drop + re-create tables).
-    Handles both small sessions (batched together) and large BEAM sessions
-    (split across multiple jobs at TOKEN_BUDGET boundaries).
+    Ingest the adapted dataset sessions using the MindCache SDK client.
+    Queues all turns under session groups and processes them dynamically.
     """
-    from mindcache.Database.db_setup import init_db, engine, Base, ProcessingJob
-    from sqlalchemy.orm import sessionmaker
-
+    # 1. Initialize client
+    mc = MindCache(db_path=db_path)
+    
+    # 2. Reset the user database for a clean slate
+    mc.reset(user_id=user_id)
+    
+    # 3. Add all sessions via the client API
     sessions = adapted_data.get("sessions", [])
-    log.info(f"[Stage 2] {len(sessions)} sessions → creating jobs (DB reset first)")
-
-    Base.metadata.drop_all(engine)
-    init_db()
-
-    Session = sessionmaker(bind=engine)
-    db_session = Session()
-
-    batch_texts, batch_meta, batch_tokens, job_count = [], [], 0, 0
-
+    log.info(f"[Stage 2] Queuing {len(sessions)} sessions for user '{user_id}'...")
+    
     for session in sessions:
-        sid      = session["id"]
-        ts       = session.get("timestamp")
-        content  = session.get("content", [])
-        sess_txt = _format_session_text(session)
-        sess_tok = _estimate_tokens(sess_txt)
+        ts = session.get("timestamp")
+        timestamp_dt = None
+        if ts:
+            for fmt in ("%B-%d-%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    timestamp_dt = datetime.strptime(ts, fmt)
+                    break
+                except Exception:
+                    continue
+            if not timestamp_dt:
+                try:
+                    timestamp_dt = datetime.fromisoformat(ts)
+                except Exception:
+                    timestamp_dt = None
 
-        if sess_tok <= TOKEN_BUDGET:
-            if batch_tokens + sess_tok > TOKEN_BUDGET and batch_texts:
-                _save_job(db_session, batch_texts, batch_meta)
-                job_count += 1
-                batch_texts, batch_meta, batch_tokens = [], [], 0
-            batch_texts.append(sess_txt)
-            batch_meta.append({"id": sid, "timestamp": ts})
-            batch_tokens += sess_tok
-        else:
-            if batch_texts:
-                _save_job(db_session, batch_texts, batch_meta)
-                job_count += 1
-                batch_texts, batch_meta, batch_tokens = [], [], 0
-
-            chunk_turns, chunk_tokens = [], 0
-            for turn in content:
-                turn_txt = f"{turn.get('role','user').capitalize()}: {turn.get('content','')}"
-                turn_tok = _estimate_tokens(turn_txt)
-                if (chunk_tokens + turn_tok > TOKEN_BUDGET
-                        and chunk_turns
-                        and chunk_turns[-1].get("role") == "assistant"):
-                    chunk_text = _format_turns_text(chunk_turns, ts)
-                    turn_ids   = [t.get("turn_id") for t in chunk_turns if t.get("turn_id") is not None]
-                    _save_job(db_session, chunk_text, {"id": turn_ids, "timestamp": ts})
-                    job_count += 1
-                    chunk_turns, chunk_tokens = [], 0
-                chunk_turns.append(turn)
-                chunk_tokens += turn_tok
-
-            if chunk_turns:
-                turn_ids  = [t.get("turn_id") for t in chunk_turns if t.get("turn_id") is not None]
-                chunk_text = _format_turns_text(chunk_turns, ts)
-                _save_job(db_session, chunk_text, {"id": turn_ids, "timestamp": ts})
-                job_count += 1
-
-    if batch_texts:
-        _save_job(db_session, batch_texts, batch_meta)
-        job_count += 1
-
-    db_session.commit()
-    db_session.close()
-    log.info(f"[Stage 2] Created {job_count} processing jobs (token budget: {TOKEN_BUDGET})")
-
-
-def _batch_embed(pending, embedder):
-    """Pre-compute multi-vector embeddings for all pending jobs that lack one."""
-    import numpy as np
-    from mindcache.Database.db_setup import engine, ProcessingJob
-    from sqlalchemy.orm import sessionmaker
-
-    needs = [j for j in pending if j.embedding is None]
-    if not needs:
-        log.info(f"[Embed] All {len(pending)} jobs already embedded.")
-        return
-
-    log.info(f"[Embed] Embedding {len(needs)} jobs...")
-    Session = sessionmaker(bind=engine)
-    db_session = Session()
-    try:
-        for job in needs:
-            parts = _partition_text(job.raw_prompt)
-            if not parts:
-                continue
-            vecs = embedder.encode(parts, is_query=False)
-            job.embedding = vecs.astype(np.float32).tobytes()
-            db_job = db_session.get(ProcessingJob, job.id)
-            if db_job:
-                db_job.embedding = job.embedding
-            db_session.commit()
-            log.info(f"[Embed] Job {job.id}: {len(parts)} chunks embedded.")
-    except Exception as e:
-        db_session.rollback()
-        log.warning(f"[Embed] Batch embedding failed ({e}). Will embed on-demand.")
-    finally:
-        db_session.close()
-
-
-def _run_single_batch(limit: int = 35):
-    """
-    Process up to `limit` pending jobs: extract memories via Gemini, save to DB,
-    run tree reorganization. Called as a subprocess by _run_jobs() for memory isolation.
-    """
-    from mindcache.Database.db_setup import engine, ProcessingJob
-    from mindcache.Database.db_manager import DatabaseManager
-    from mindcache.Memory_extract.memory_extractor import Memory_Extractor
-    from mindcache.Memory_extract.safe_ai import AllKeysExhaustedError
-    from mindcache.Database.reorganize_tree import reorganize_tree
-    from sqlalchemy.orm import sessionmaker
-
-    try:
-        extractor = Memory_Extractor(sys_prompt=_EVAL_SYSTEM_PROMPT)
-        log.info(f"Memory Extractor ready (model: {extractor.engine.model_name})")
-    except Exception as e:
-        log.error(f"Failed to init Memory Extractor: {e}")
-        log.error("Make sure GEMINI_API_KEY is set.")
-        return
-
-    Session    = sessionmaker(bind=engine)
-    db_session = Session()
-    pending    = (db_session.query(ProcessingJob)
-                  .filter(ProcessingJob.status == "pending")
-                  .order_by(ProcessingJob.id).limit(limit).all())
-
-    if not pending:
-        log.info("No pending jobs in this batch.")
-        db_session.close()
-        return
-
-    _batch_embed(pending, extractor._db._get_embedder())
-    db_session.expire_all()
-    pending = (db_session.query(ProcessingJob)
-               .filter(ProcessingJob.status == "pending",
-                       ProcessingJob.id.in_([j.id for j in pending]))
-               .order_by(ProcessingJob.id).all())
-
-    db_manager  = DatabaseManager()
-    success = failed = 0
-    MAX_RETRIES, MIN_RATIO = 3, 5
-
-    for i, job in enumerate(pending):
-        turn_ids = json.loads(job.raw_next_prompt)
-        log.info(f"[Job {i+1}/{len(pending)}] {len(turn_ids)} turns")
-        try:
-            t0 = time.time()
-            extracted = extractor.memory_extract(job.raw_prompt, query_embedding=job.embedding)
-            elapsed   = time.time() - t0
-
-            if not extracted:
-                log.warning(f"  [FAIL] No extraction ({elapsed:.1f}s)")
-                job.status = "failed"; job.retry_count += 1
-                db_session.commit(); failed += 1
-                continue
-
-            input_tok = len(_normalize_for_ratio(job.raw_prompt)) // 4
-            mem_chars = sum(
-                len(e) for b in extracted.get("memory", [])
-                for mt in ["user","fact","epis","decision"]
-                for e in b.get(mt, []) if isinstance(e, str)
-            )
-            mem_count = sum(
-                len(b.get(mt, [])) for b in extracted.get("memory", [])
-                for mt in ["user","fact","epis","decision"]
-            )
-            ratio = (mem_chars // 4) / input_tok * 100 if input_tok > 0 else 0
-
-            if ratio < MIN_RATIO and job.retry_count < MAX_RETRIES:
-                job.retry_count += 1; db_session.commit(); failed += 1
-                log.warning(f"  [LOW] {mem_count} memories, ratio={ratio:.0f}% < {MIN_RATIO}%. Retry {job.retry_count}/{MAX_RETRIES}")
-                continue
-
-            db_manager.save_extracted_memory(
-                job_id=job.id, raw_msg=job.raw_prompt,
-                extracted_data=extracted,
-                source_session_id=json.dumps(turn_ids),
-                session_timestamp=job.timestamp,
-            )
-            db_session.expire_all()
-            if db_session.get(ProcessingJob, job.id):
-                log.warning(f"  [WARN] Save may have failed silently ({elapsed:.1f}s)")
-                failed += 1
-            else:
-                log.info(f"  [OK] {mem_count} memories, ratio={ratio:.0f}% ({elapsed:.1f}s)")
-                success += 1
-
-        except AllKeysExhaustedError:
-            log.error("ALL API KEYS EXHAUSTED — stopping ingestion.")
-            db_session.close()
-            sys.exit(8)
-        except Exception as e:
-            msg = str(e)
-            log.error(f"  [ERROR] {msg[:200]}")
-            if any(x in msg.lower() for x in ["quota", "429", "resource_exhausted"]):
-                log.error("API QUOTA EXHAUSTED — stopping ingestion.")
-                db_session.close()
-                sys.exit(8)
-            job.status = "failed"; job.retry_count += 1
-            db_session.commit(); failed += 1
-
-    db_session.close()
-    log.info(f"Batch done: {success} succeeded, {failed} failed.")
-
-    if success > 0:
-        log.info("Running tree reorganization...")
-        try:
-            reorganize_tree(dry_run=False)
-        except Exception as e:
-            log.warning(f"Reorganization error: {e}")
-
-
-def _run_jobs():
-    """
-    Manager: repeatedly spawns this script as a subprocess with --_run-batch
-    to process all pending jobs in groups of 35, ensuring full memory cleanup
-    between batches (important when running large Gemini model workloads).
-    """
-    from mindcache.Database.db_setup import engine, ProcessingJob
-    from sqlalchemy.orm import sessionmaker
-
-    Session    = sessionmaker(bind=engine)
-    total_done = 0
-    batch_num  = 1
-
-    while True:
-        db_session    = Session()
-        pending_count = db_session.query(ProcessingJob).filter(
-            ProcessingJob.status == "pending").count()
-        db_session.close()
-
-        if pending_count == 0:
-            log.info("No more pending jobs.")
-            break
-
-        log.info(f"=== BATCH {batch_num}: spawning subprocess for up to 35 jobs ===")
-        script = os.path.abspath(__file__)
-        try:
-            subprocess.run([sys.executable, "-u", script, "--_run-batch"], check=True)
-        except subprocess.CalledProcessError as e:
-            if e.returncode == 8:
-                sys.exit(8)
-            sys.exit(e.returncode)
-
-        db_session    = Session()
-        new_pending   = db_session.query(ProcessingJob).filter(
-            ProcessingJob.status == "pending").count()
-        db_session.close()
-
-        processed = pending_count - new_pending
-        if processed <= 0:
-            log.warning("No jobs processed in this batch — stopping to avoid loop.")
-            break
-
-        total_done += processed
-        batch_num  += 1
-        import gc; gc.collect()
-        time.sleep(2)
-
-    log.info(f"All batches done. Total processed: {total_done}")
-
-
-def ingest_adapted(adapted_data: dict, db_path: str):
-    """
-    Full ingestion pipeline:
-      1. Create ProcessingJob rows from sessions (no API calls)
-      2. Run memory extraction via Gemini (spawns subprocess batches)
-
-    Requires GEMINI_API_KEY in environment.
-    """
-    _create_jobs(adapted_data, db_path)
-    log.info("[Stage 2] Starting extraction (this may take several minutes)…")
-    _run_jobs()
+        # Queue the turns in this session
+        mc.add(
+            messages=session.get("content", []),
+            user_id=user_id,
+            timestamp=timestamp_dt
+        )
+        
+    log.info("[Stage 2] Processing queue (running automatic consolidation, batch embedding, and extraction)...")
+    # 4. Process all queued jobs (setting high limit to process the entire queue)
+    mc.process_queue(user_id=user_id, limit=9999, consolidation_max_tokens=4000)
     log.info("[Stage 2] Ingestion complete.")
 
 
@@ -656,17 +243,12 @@ def run_retrieval_eval(
     Saves to: <output_dir>/beam_conv<conv_id>_results.json
     Returns the path of the saved file.
     """
-    from mindcache import MindCache
-    from mindcache.retrieval.root_cache import refresh_tree_cache
-
     os.makedirs(output_dir, exist_ok=True)
     if limit:
         test_cases = test_cases[:limit]
 
     log.info(f"[Stage 3] Initialising MindCache (db={db_path}, user={user_id})")
     mc = MindCache(db_path=db_path)
-    # Refresh so no stale in-memory/disk cache pollutes results
-    refresh_tree_cache(user_id=user_id)
 
     results = []
     for i, tc in enumerate(test_cases):
@@ -679,22 +261,21 @@ def run_retrieval_eval(
         log.info(f"[Stage 3] [{i+1}/{len(test_cases)}] {q_text[:80]}…")
 
         t0  = time.time()
-        res = mc.retriever.retrieve(q_text, user_id=user_id, use_reranker=False)
+        # Retrieve context string using standard API
+        context = mc.search(q_text, user_id=user_id, use_reranker=False)
         lat = round(time.time() - t0, 3)
 
         log.info(
-            f"  → context={len(res.context)} chars | "
-            f"type={res.query_type or q_type} | latency={lat}s"
+            f"  → context={len(context)} chars | latency={lat}s"
         )
         results.append({
             "question_id":       q_id,
             "question_type":     q_type,
-            "detected_type":     res.query_type or q_type,
+            "detected_type":     q_type,
             "question":          q_text,
             "expected":          expected,
             "rubric":            rubric,
-            "system_prompt":     res.system_hint,
-            "retrieved_context": res.context,
+            "retrieved_context": context,
             "retrieval_latency": lat,
         })
         time.sleep(0.5)
@@ -708,13 +289,12 @@ def run_retrieval_eval(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CLI
+# CLI Entry Point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="End-to-end BEAM evaluation for MindCache (adapt → ingest → retrieve).",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="End-to-end BEAM evaluation for MindCache using library SDK.",
     )
     parser.add_argument("--parquet",       default="BEAM/1M-00000-of-00001.parquet")
     parser.add_argument("--conv-index",    type=int, default=7)
@@ -724,16 +304,8 @@ if __name__ == "__main__":
     parser.add_argument("--adapted-json",  default=None)
     parser.add_argument("--skip-ingest",   action="store_true")
     parser.add_argument("--limit",         type=int, default=None)
-    # Internal flag used by _run_jobs() subprocess spawning — not for end users
-    parser.add_argument("--_run-batch",    action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    # ── Internal subprocess entry-point ──────────────────────────────────────
-    if args._run_batch:
-        _run_single_batch(limit=35)
-        sys.exit(0)
-
-    # ── Normal pipeline ──────────────────────────────────────────────────────
     os.makedirs(args.output_dir, exist_ok=True)
     if args.adapted_json is None:
         args.adapted_json = os.path.join(
@@ -742,7 +314,7 @@ if __name__ == "__main__":
 
     if not args.skip_ingest:
         adapted_data = adapt_beam(args.parquet, args.adapted_json, args.conv_index)
-        ingest_adapted(adapted_data, args.db_path)
+        ingest_adapted(adapted_data, args.db_path, args.user_id)
     else:
         log.info(f"[Stage 1-2] Skipped — loading: {args.adapted_json}")
         with open(args.adapted_json, "r", encoding="utf-8") as f:
