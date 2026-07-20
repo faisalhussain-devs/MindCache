@@ -6,8 +6,11 @@
 [![BEAM-10M](https://img.shields.io/badge/Benchmark-BEAM--10M%20Passed-success)](https://arxiv.org/abs/2404.17299)
 [![PyPI version](https://img.shields.io/badge/pypi-v0.1.0-blue)](https://pypi.org/project/mindcache/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Medium Blog](https://img.shields.io/badge/Read_Design_Blog-Medium-black?logo=medium)](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian)
 
 MindCache is a structured long-term memory engine designed for production-grade LLM agents. Unlike flat vector search databases or basic summary stores, MindCache maintains a **self-restructuring hierarchical memory ontology** with explicit decision tracking, outperforming flat retrieval systems on the BEAM QA benchmark.
+
+> 📖 **Read the Design Story:** Detailed details of the architecture design are available in the blog post [Building MindCache: Designing an Agentic Memory System for Long-Term AI](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian).
 
 ---
 
@@ -198,7 +201,7 @@ MindCache was benchmarked on [BEAM](https://arxiv.org/abs/2404.17299) — a long
 
 ### Results
 
-**1 Million context** — 5 conversations, ~20 questions each
+**1 Million context** — 10 conversations, ~20 questions each
 
 | | Score | Accuracy |
 | :--- | :---: | :---: |
@@ -206,20 +209,42 @@ MindCache was benchmarked on [BEAM](https://arxiv.org/abs/2404.17299) — a long
 | Conversation 2 | 19 / 20 | 95% |
 | Conversation 3 | 18 / 20 | 90% |
 | Conversation 4 | 18 / 20 | 90% |
-| Conversation 5 | 18 / 20 | 90% |
-| **Average** | **18.2 / 20** | **91%** |
+| Conversation 5 | 15 / 20 | 75% |
+| Conversation 6 | 16 / 20 | 80% |
+| Conversation 7 | 18 / 20 | 90% |
+| Conversation 8 | 18 / 20 | 90% |
+| Conversation 9 | 17 / 20 | 85% |
+| Conversation 10 | 17 / 20 | 85% |
+| **Average** | **17.4 / 20** | **87%** |
 
-**10 Million context** — 2 conversations, ~20 questions each
+**10 Million context** — 5 conversations, ~20 questions each
 
 | | Score | Accuracy |
 | :--- | :---: | :---: |
 | Conversation 1 | 17 / 20 | 85% |
 | Conversation 2 | 13 / 20 | 65% |
-| **Average** | **15 / 20** | **75%** |
+| Conversation 3 | 15 / 20 | 75% |
+| Conversation 4 | 13 / 20 | 65% |
+| Conversation 5 | 16 / 20 | 80% |
+| **Average** | **14.8 / 20** | **74.0%** |
 
 > Conversation 2 at 10M included 3–4 benchmark edge cases (Lambada-style multi-hop questions) that sit at the hard ceiling of the benchmark design. Excluding those, accuracy for that conversation is ~94%.
 
-**Overall: 140+ questions evaluated across both context scales.**
+**Overall: 300 questions evaluated across both context scales.**
+
+---
+
+### ⚖️ Comparison with Mem0
+
+The table below compares MindCache's results against the officially published benchmark scores from Mem0's research on the BEAM benchmark:
+
+| Metric | Mem0 (Official Research) | MindCache (Ours) | Delta / Improvement |
+| :--- | :---: | :---: | :---: |
+| **BEAM-1M Accuracy** | 64.1% | **87.0%** | 🚀 **+22.9%** |
+| **BEAM-10M Accuracy** | 48.6% | **74.0%** | 🚀 **+25.4%** |
+| **Avg. Retrieval Latency** | ~1.20s | **~1.08s** | ⚡ **-10% faster** |
+| **Avg. Tokens Used (1M)** | 6,719 | **~6,660** | 📉 **-59 tokens** |
+| **Avg. Tokens Used (10M)** | 6,914 | **~6,690** | 📉 **-224 tokens** |
 
 ---
 
@@ -227,7 +252,7 @@ MindCache was benchmarked on [BEAM](https://arxiv.org/abs/2404.17299) — a long
 
 Nearly all real failures — across both context sizes — fall into two categories: **event ordering** and **summarization-type** questions. Both are broad queries that require retrieving many supporting memory chunks simultaneously. When the relevant evidence is spread across many nodes, the top-K retrieval pool doesn't always cover every required fact.
 
-This is a known retrieval recall limitation for broad queries, not a precision problem. Factual, specific questions (knowledge lookups, user preferences, decisions) answer correctly and consistently.
+Occasionally, minor failures occur in multi-session tracking, temporal ordering, and knowledge updates (1 or 2 times). Factual, specific questions (knowledge lookups, user preferences, decisions) answer correctly and consistently.
 
 ---
 

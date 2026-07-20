@@ -34,10 +34,7 @@ log = logging.getLogger("eval_beam_e2e")
 # Allow running from repo root or from eval/ subdirectory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Stage 1 — Adapt BEAM parquet → MindCache JSON
-# ─────────────────────────────────────────────────────────────────────────────
 
 def adapt_beam(parquet_path: str, output_path: str, conv_index: int = 7) -> dict:
     """
@@ -177,9 +174,7 @@ def adapt_beam(parquet_path: str, output_path: str, conv_index: int = 7) -> dict
     return output_data
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 — Ingest adapted JSON using the MindCache Library
-# ─────────────────────────────────────────────────────────────────────────────
 
 def ingest_adapted(adapted_data: dict, db_path: str, user_id: str = "default"):
     """
@@ -225,9 +220,7 @@ def ingest_adapted(adapted_data: dict, db_path: str, user_id: str = "default"):
     log.info("[Stage 2] Ingestion complete.")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Stage 3 — Retrieval evaluation
-# ─────────────────────────────────────────────────────────────────────────────
 
 def run_retrieval_eval(
     test_cases: list,
@@ -288,9 +281,7 @@ def run_retrieval_eval(
     return out_path
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # CLI Entry Point
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
