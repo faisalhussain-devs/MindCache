@@ -36,7 +36,7 @@ class MindCache:
         gemini_api_key: str = None,
         provider: str = "gemini",
         model_name: str = "gemini-2.5-flash",
-        enable_summarization: bool = False,
+        enable_summarization: bool = True,
     ):
         if db_path:
             os.environ["MINDCACHE_DB_PATH"] = db_path

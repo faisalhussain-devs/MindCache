@@ -205,7 +205,7 @@ def ingest_adapted(
     mc = MindCache(db_path=db_path, enable_summarization=True)
     
     # 2. Reset the user database for a clean slate
-    """mc.reset(user_id=user_id)
+    mc.reset(user_id=user_id)
     
     # 3. Add all sessions via the client API
     sessions = adapted_data.get("sessions", [])
@@ -236,8 +236,7 @@ def ingest_adapted(
                     user_id=user_id,
                     timestamp=timestamp_dt
                 )
-                messages = []"""
-
+                messages = []
     while True:    
         log.info("[Stage 2] Processing queue (running automatic consolidation, batch embedding, and extraction)...")
         # 4. Process all queued jobs (setting high limit to process the entire queue)
