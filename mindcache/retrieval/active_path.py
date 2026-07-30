@@ -52,8 +52,6 @@ def _get_content_only(entry) -> str:
 # Keyword-based Query Classifier
 # ML-based classifier (TF-IDF + LogReg) will replace this at a later stage.
 
-
-
 _BROAD_PHRASES = [
     "summarize", "summary", "compare",         # "summaries" removed (fires on "chapter summaries" noun)
     "how my understanding", "how did my", "evolved", "developed",
@@ -64,39 +62,6 @@ _BROAD_PHRASES = [
     "timeline", "reconstruct", "chronolog",    # "overview" removed (fires on document names e.g. "design overview")
 ]
 
-# Shared directive blocks injected into every prompt
-
-_USER_PROFILE_DIRECTIVE = (
-    "User Profile as Binding Instructions (CRITICAL): Entries in the context "
-    "marked [USER PROFILE & STANDING PREFERENCES] or tagged [USER] or [DECISION] "
-    "are NOT merely background. They represent the user's explicit likes, dislikes, "
-    "decisions, and standing directives. You MUST honour them in every answer you give. "
-    "Rules:\n"
-    "  - If the user has stated a standing preference or lifestyle choice, lead with options "
-    "that satisfy it and demote or omit options that contradict it. If presenting an option "
-    "that contradicts a user preference, you MUST demote it explicitly as a last-resort fallback "
-    "or secondary option.\n"
-    "  - If the user has stated a restriction (dietary, health, tool-use, etc.), do not recommend "
-    "anything that contradicts it.\n"
-    "  - Treat [DECISION] entries (active decisions) as the strongest signal — the user has "
-    "already decided; align your answer with that choice.\n\n"
-)
-
-_ABSTENTION_DIRECTIVE = (
-    "Event-Bound Abstention (CRITICAL): If the question asks for details tied to a specific "
-    "event, purchase, action, appointment, or date, you MUST verify that the "
-    "retrieved context explicitly connects the fact to THAT specific event or date. If the context "
-    "only contains generic advice or instructions on the same topic WITHOUT an explicit "
-    "reference to that specific event or date, treat it as missing information. Use the Missing Info "
-    "sentence and explicitly state which specific detail was not found in the retrieved memories. "
-    "Do NOT answer using generic context when event-specific context is required.\n\n"
-)
-
-_MISSING_INFO_DIRECTIVE = (
-    "Missing Info: If the answer is not present in the retrieved context, respond with: "
-    "'Based on the provided context, there is no information about [requested fact].' "
-    "Specify clearly what was missing rather than guessing or using related general facts.\n\n"
-)
 
 from dataclasses import dataclass
 import logging
@@ -121,116 +86,186 @@ def classify_query(query: str) -> QueryClassification:
     return QueryClassification(val, is_broad)
 
 
-_RECENCY_DIRECTIVE = (
-    "Timestamp & Recency (ALWAYS ACTIVE): Every retrieved memory carries a "
-    "[Recorded: YYYY-MM-DD HH:MM] timestamp showing when it was stored.\n"
-    "Rules:\n"
-    "  - EVOLUTION (same fact updated over time): If one memory is clearly a "
-    "revised or updated version of an earlier memory on the exact same fact "
-    "(e.g., the user changed a preference, a decision was revised, a fact was "
-    "corrected), treat the NEWEST memory as the authoritative version. Mention "
-    "the older value only if the change itself is relevant to the answer "
-    "(e.g., 'previously X, now updated to Y').\n"
-    "  - GENUINE CONFLICT (competing claims not explainable by evolution): If "
-    "two memories make contradictory claims that cannot be resolved by recency "
-    "alone — for example, a stored fact contradicts a user's self-report, or "
-    "two memories assert opposite things with no clear update relationship — "
-    "cite BOTH, note the conflict, and flag it explicitly rather than silently "
-    "choosing one. Use the newest as the primary but surface the discrepancy.\n"
-    "  - NON-CONFLICTING: For stable facts with no contradiction, timestamps "
-    "are invisible to the answer unless the user specifically asks about timing.\n"
-    "  - EVOLUTION ARC: When summarising how understanding or preferences evolved, "
-    "describe the progression oldest-to-newest using the timestamps as anchors.\n\n"
-)
+_UNIFIED_SYSTEM_PROMPT = """<system>
 
-_CHRONOLOGICAL_DIRECTIVE = (
-    "Chronological Reasoning (ALWAYS ACTIVE): If the question asks about sequences, "
-    "timelines, first mentions, ordering of events, or durations, apply these rules:\n"
-    "  - Chronological Priority: Use the [Recorded: ...] timestamps on retrieved "
-    "entries to determine the sequence of events. Always anchor your answer to "
-    "exact dates where available.\n"
-    "  - First Meaningful Mention: Identify the earliest date a concept was "
-    "substantially discussed, not merely touched on.\n"
-    "  - Zero Hallucination: Do not infer dates, sequences, or durations not "
-    "explicitly stated in the context.\n"
-    "  - Missing Timestamps: If some entries lack timestamps, reason from contextual "
-    "clues (e.g., concept dependency order) and flag the uncertainty.\n"
-    "  - Fixed-Count Lists: If asked for exactly N items, scan the full context first "
-    "and budget across the full timeline — do not exhaust count on early entries.\n"
-    "  - No Clustering: Each list item must represent ONE distinct event or concept, "
-    "anchored to its specific date.\n\n"
-)
+<role>
+
+You are a memory-grounded synthesis engine.
+Your only knowledge source is the retrieved context.
+Do not use outside knowledge.
+Do not infer missing facts.
+If the retrieved context cannot answer the question, explicitly state what information is missing.
+
+</role>
+
+<execution_pipeline>
+
+<step id="1" name="Understand Query">
+Determine the question type before answering.
+Possible categories include:
+- Fact lookup
+- Broad summary / evolution
+- Timeline
+- Recommendation
+- Comparison
+- Arithmetic / counting
+- Event-specific lookup
+- Contradiction resolution
+Only activate the reasoning required for that question type.
+</step>
+
+<step id="2" name="Collect Evidence">
+Read the entire retrieved context.
+Do not stop after finding the first relevant memory.
+Identify every memory relevant to the user's question.
+Ignore unrelated memories.
+When multiple memories discuss the same entity, event, decision or attribute, collect all of them before reasoning.
+If this is a broad summary question:
+1. Read branch summaries first to identify the overall structure.
+2. Then read the supporting memories.
+3. Replace generic statements from summaries with the specific people, places, decisions, events and facts contained in the supporting memories.
+Branch summaries are organizational guides.
+Supporting memories are the evidence.
+</step>
+
+<step id="3" name="Reason">
+Apply only the reasoning required.
+<memory_authority>
+When multiple memory types describe the same user state, use the following authority unless explicit evidence indicates otherwise:
+
+1. USER memories
+   - Direct statements made by the user.
+   - Highest authority for the user's current state, preferences and facts.
+
+2. DECISION memories
+   - Active decisions and commitments.
+   - Override earlier intentions but do not override later USER statements.
+
+3. KNOWLEDGE memories
+   - Derived explanations, calculations or synthesized facts.
+   - Use these unless they conflict with a direct USER memory or an active DECISION.
+
+4. EPISODIC memories
+   - Conversation history and context.
+   - Use primarily to reconstruct events and timelines rather than current state.
+Do not allow a synthesized KNOWLEDGE memory to override a direct USER memory unless the retrieved context explicitly states that it supersedes or updates it.
+
+
+Origin metadata is authoritative:
+- `origin=user-stated` or `origin=user-confirmed` is direct evidence of the user's state.
+- `origin=assistant-advice` and `origin=assistant-statement` record what the assistant said or recommended. They are never evidence that the user believes, chose, completed, or prefers that content.
+- `origin=conversation-synthesis` records a user-specific exchange or discussion context. Use it as context, not as proof of a completed user action unless the content explicitly says so.
+- `origin=legacy-unknown` lacks structured provenance. Treat it cautiously and never let it override direct user-stated or user-confirmed evidence.
+
+</memory_authority>
+
+<timeline>
+
+Order events chronologically.
+When describing evolution, present events from oldest to newest.
+Do not assume the newest memory is automatically correct.
+Determine whether a later memory:
+
+- updates an earlier fact,
+- corrects an earlier fact,
+- supersedes an earlier value,
+- continues the same event,
+- or represents a separate scenario.
+
+If a later memory explicitly replaces an earlier value, answer using the updated value.
+If memories genuinely conflict and neither clearly supersedes the other, report both and explicitly mention the conflict.
+If a memory preserves a relative duration or ambiguous wording, keep that wording visible instead of converting it into a precise fact without support.
+</timeline>
+
+<arithmetic>
+
+Arithmetic is the final fallback, not the primary reasoning method.
+Before performing any calculation:
+1. Search the retrieved memories for an explicit calculated result.
+2. If an explicit result already answers the question, always use that value.
+3. Do not recompute totals that already exist.
+4. Only perform arithmetic if no explicit result exists anywhere in the retrieved context.
+Manual arithmetic should be avoided whenever possible because retrieved context may contain many related memories, and omitting even one relevant memory can produce an incorrect calculation.
+
+</arithmetic>
+
+
+<recommendation>
+Respect active user decisions and standing preferences.
+Do not recommend options that contradict active decisions unless the user explicitly asks to reconsider them.
+</recommendation>
+
+
+<contradictions>
+If multiple memories describe the same fact:
+First determine whether they are:
+- duplicate memories,
+- historical updates,
+- corrections,
+- evolving states,
+- or genuine contradictions.
+
+Treat updates as evolution rather than conflicts.
+Treat corrections as replacing the incorrect value.
+Only report a contradiction when multiple memories cannot both be true and no retrieved evidence resolves the conflict.
+</contradictions>
+<context_selection>
+
+If multiple retrieved memories represent different financial states, plans, hypothetical scenarios or time periods:
+Do not combine them automatically.
+First determine which memories belong to the same state or scenario.
+Prefer memories explicitly describing the user's current state over historical examples, hypothetical calculations or planning discussions.
+If multiple equally valid interpretations remain and the retrieved context does not resolve them, explicitly explain the ambiguity instead of selecting one arbitrarily.
+</context_selection>
+
+
+<event_lookup>
+Only answer with details explicitly connected to the requested event.
+If the connection is missing, state exactly what information is unavailable.
+Do not substitute generic information.
+</event_lookup>
+
+</step>
+
+<step id="4" name="Compose">
+Generate the answer only from collected evidence.
+Prefer concrete facts over abstract summaries.
+Prefer retrieved evidence over paraphrased generalizations.
+Do not invent relationships between memories that are not explicitly supported.
+</step>
+
+<step id="5" name="Validation">
+Before returning the answer, silently verify:
+✓ Did I answer every part of the question?
+✓ Did I read every relevant retrieved memory?
+✓ For broad summaries, did I use summaries only as structure and supporting memories as evidence?
+✓ Did I miss any explicit numbers, dates or decisions?
+✓ Did I reuse an explicit calculated value instead of recomputing it?
+✓ Did I distinguish updates from genuine contradictions?
+✓ Did I preserve conflicting or time-relative evidence written in memory content?
+✓ Did I accidentally merge multiple scenarios into one answer?
+✓ Did I ignore a later memory that explicitly superseded an earlier one?
+✓ Did I introduce information not supported by the retrieved context?
+If any answer is "Yes", correct the response before returning it.
+
+</step>
+
+</execution_pipeline>
+
+<response>
+
+Be concise.
+Be precise.
+Use only retrieved evidence.
+If information is missing, explicitly state what is missing rather than guessing.
+
+</response>
+
+</system>
+"""
 
 def get_system_prompt(is_broad: bool) -> str:
-    role = "Knowledge Synthesis & Recommendation Engine" if is_broad else "Precise Memory Extraction & Recommendation Engine"
-    desc = (
-        "memory-grounded assistant. Synthesise a comprehensive, structured answer"
-        if is_broad
-        else "strict, memory-grounded system. Your primary task is to locate and report the specific fact, recommendation, or detail requested"
-    )
-
-    system_prompt = (
-        f"SYSTEM ROLE: {role}\n"
-        f"You are a {desc} using ONLY the retrieved context.\n"
-        "CORE DIRECTIVES:\n"
-        + _USER_PROFILE_DIRECTIVE
-        + _ABSTENTION_DIRECTIVE
-        + _MISSING_INFO_DIRECTIVE
-        + _RECENCY_DIRECTIVE
-        + _CHRONOLOGICAL_DIRECTIVE
-    )
-
-    if is_broad:
-        system_prompt += (
-            "Synthesis over Extraction: Do not just list facts. Identify patterns, "
-            "progressions, and relationships across topics.\n"
-            "Conceptual Arc: Organise the answer around how understanding evolved — from "
-            "foundational concepts to advanced applications.\n"
-            "Branch Summaries First: Weight branch-level summaries (marked [BRANCH SUMMARY]) "
-            "as the primary structural content; use leaf memories for supporting detail.\n"
-            "Gap Acknowledgement: If an area the user likely studied has no retrieved "
-            "memories, explicitly note the gap rather than speculating.\n"
-        )
-    else:
-        system_prompt += (
-            "Exact Extraction: For counts, percentages, number pairs, problem names, "
-            "accuracy rates, prices, and identifiers — report the exact value from the "
-            "context. Do not paraphrase numbers.\n"
-            "Narrow Match: If multiple similar values appear, report the one that most "
-            "narrowly matches the specific wording of the question.\n"
-            "No Unnecessary Elaboration: Do not add context, explanations, or related "
-            "information beyond what directly answers the question — unless the question "
-            "is a recommendation question, in which case honour the user's standing "
-            "preferences and provide a concise compliant suggestion.\n"
-        )
-
-    if is_broad:
-        validation = (
-            "FINAL VALIDATION: Did you read ALL [USER PROFILE] and [DECISION] entries "
-            "first? Does every recommendation comply with the user's standing preferences? "
-            "If a suggestion contradicts a stated preference, remove it or clearly label "
-            "it a last-resort option. Does the answer cover the full arc? Are gaps acknowledged? "
-            "For any topic with multiple memories: did you apply recency — evolution treated as update, "
-            "genuine conflicts flagged with both values surfaced? "
-            "If the answer involves a sequence or timeline: are all dates exact, is the ordering anchored "
-            "to [Recorded] timestamps, and is any ordering uncertainty explicitly stated? "
-            "If the question targets a specific event and that event's detail is absent, "
-            "did you use the Missing Info sentence?"
-        )
-    else:
-        validation = (
-            "FINAL VALIDATION: Is the answer a direct, exact extraction? Did you check "
-            "ALL [USER PROFILE] and [DECISION] entries before answering? If the question "
-            "targets a specific event/date/purchase, does the retrieved context explicitly "
-            "link to that exact event — if not, use the Missing Info sentence. "
-            "For any topic with multiple memories: is the newest treated as authoritative "
-            "for clear updates; are genuine conflicts (not explainable by recency) flagged "
-            "with both values surfaced? "
-            "If the answer involves dates or sequences: are all dates exact and is the ordering "
-            "anchored to [Recorded] timestamps with uncertainty flagged where timestamps are absent?"
-        )
-    system_prompt += validation
-    return system_prompt
+    return _UNIFIED_SYSTEM_PROMPT
 
 
 class ActivePathRetrieval:
@@ -517,7 +552,7 @@ class ActivePathRetrieval:
                     logger.info("[Retrieval] Phase 6: reranker disabled, using RRF ordering.")
 
                 # Select top expansions (10 for broad queries, 5 for specific queries)
-                cutoff = 10 if qc.is_broad else 5
+                cutoff = 5
                 selected_expansions_map[anchor_key] = reranked_expansion[:cutoff]
 
             # Phase 7 — Global Deduplication & Assembly
@@ -560,14 +595,17 @@ class ActivePathRetrieval:
                     topic_ids.add(c["topic_id"])
             topic_db_map = self._fetch_topics_batch(session, topic_ids, user_id=user_id)
 
-            context_parts = []
+            memory_parts_dict = {
+                "DECISION": [],
+                "EPISODIC": [],
+                "KNOWLEDGE": [],
+                "USER": []
+            }
+            summary_parts = []
             collected_leaf_ids = set()
             collected_branch_ids = set()
 
-            # 8a. Format [USER PROFILE & STANDING PREFERENCES] block with nesting
-            protected_parts = []
-            
-            # Format and nesting logic for active anchors
+            # 8a. Format decision anchors with related expansion memories
             for anchor in top3_decision_anchors:
                 anchor_key = anchor["memory_id"]
                 if not anchor["searchable_text"] or not anchor["path"]:
@@ -577,52 +615,52 @@ class ActivePathRetrieval:
                 if not anchor_db or not anchor_db.content:
                     continue
 
-                status = getattr(anchor_db, "status", "active")
-                context = getattr(anchor_db, "context", "")
-                header = f"[DECISION ({status})] {anchor['name']}Context Behind this decision : {context}"
-
-                ts = anchor_db.timestamp.strftime("%Y-%m-%d %H:%M") if anchor_db.timestamp else None
-                ts_line = f"[Recorded: {ts}]\n" if ts else ""
-
-                anchor_text = f"{header}\n{ts_line}{anchor_db.content}"
+                decision_context = getattr(anchor_db, "context", "")
+                ts = anchor_db.timestamp.strftime("%Y-%m-%d") if anchor_db.timestamp else None
+                date_attr = f' date="{ts}"' if ts else ""
 
                 related_candidates = deduped_expansions_map.get(anchor_key, [])
-                related_lines = []
+                ref_ids = [str(rc["memory_id"]) for rc in related_candidates if assembly_db_map.get(rc["memory_id"])]
+                refs_attr = f' refs="{",".join(ref_ids)}"' if ref_ids else ""
+
+                mem_lines = [f'<memory_item id="{anchor["memory_id"]}" type="DECISION"{date_attr}{refs_attr}>']
+                mem_lines.append(f"- Decision: {anchor_db.content}")
+                if decision_context:
+                    mem_lines.append(f"- Context: {decision_context}")
+                mem_lines.append("</memory_item>")
+                memory_parts_dict["DECISION"].append("\n".join(mem_lines))
+                collected_leaf_ids.add(anchor["topic_id"])
+
+                # Add related memories to flat tags
                 for rc in related_candidates:
                     mem_entry = assembly_db_map.get(rc["memory_id"])
                     if mem_entry and mem_entry.content:
-                        rc_ts = mem_entry.timestamp.strftime("%Y-%m-%d %H:%M") if mem_entry.timestamp else None
-                        rc_ts_line = f"[Recorded: {rc_ts}]\n" if rc_ts else ""
+                        rc_ts = mem_entry.timestamp.strftime("%Y-%m-%d") if mem_entry.timestamp else None
+                        rc_date_attr = f' date="{rc_ts}"' if rc_ts else ""
                         rc_label = rc["memory_type"].upper()
-                        rc_header = f"  [Related - {rc_label}] {rc['name']}"
-                        rc_body = f"{rc_ts_line}{mem_entry.content}"
-                        indented_body = "\n".join(f"  {line}" for line in rc_body.splitlines())
-                        related_lines.append(f"{rc_header}\n{indented_body}")
+                        if rc_label not in memory_parts_dict:
+                            memory_parts_dict[rc_label] = []
+                        memory_parts_dict[rc_label].append(
+                            f'<memory_item id="{rc["memory_id"]}" type="{rc_label}"{rc_date_attr}>\n'
+                            f'- Content: {mem_entry.content}\n'
+                            f'</memory_item>'
+                        )
 
-                if related_lines:
-                    anchor_text = anchor_text + "\n" + "\n".join(related_lines)
-
-                protected_parts.append(anchor_text)
-                collected_leaf_ids.add(anchor["topic_id"])
-
-            # Now add USER memories from general memories pool to protected parts
+            # 8b. Format USER memories
             for m in selected_general_memories:
                 if m["memory_type"] == "user":
                     mem_entry = assembly_db_map.get(m["memory_id"])
                     if mem_entry and mem_entry.content:
-                        header = f"[USER] {m['name']}"
-                        ts = mem_entry.timestamp.strftime("%Y-%m-%d %H:%M") if mem_entry.timestamp else None
-                        ts_line = f"[Recorded: {ts}]\n" if ts else ""
-                        protected_parts.append(f"{header}\n{ts_line}{mem_entry.content}")
+                        ts = mem_entry.timestamp.strftime("%Y-%m-%d") if mem_entry.timestamp else None
+                        date_attr = f' date="{ts}"' if ts else ""
+                        memory_parts_dict["USER"].append(
+                            f'<memory_item id="{m["memory_id"]}" type="USER"{date_attr}>\n'
+                            f'- Content: {mem_entry.content}\n'
+                            f'</memory_item>'
+                        )
                         collected_leaf_ids.add(m["topic_id"])
 
-            if protected_parts:
-                context_parts.append(
-                    "[USER PROFILE & STANDING PREFERENCES]\n"
-                    + "\n\n".join(protected_parts)
-                )
-
-            # 8b. Format leaf summaries for broad queries
+            # 8c. Format leaf summaries for broad queries
             if use_summaries:
                 for c in selected_summaries:
                     if c.get("is_leaf"):
@@ -630,62 +668,46 @@ class ActivePathRetrieval:
                         if topic:
                             desc_text = (topic.description or "")
                             if desc_text.strip():
-                                context_parts.append(
-                                    f"[LEAF SUMMARY] {topic.name}\n"
-                                    f"{desc_text.strip()}"
+                                topic_attr = f' topic="{topic.name}"' if topic.name else ""
+                                summary_parts.append(
+                                    f'<leaf_summary{topic_attr}>\n'
+                                    f'{desc_text.strip()}\n'
+                                    f'</leaf_summary>'
                                 )
                                 collected_leaf_ids.add(c["topic_id"])
 
-            # 8c. Format standalone non-protected memories (knowledge/episodic/decision)
-            standalone_memories = []
+            # 8d. Format standalone memories (knowledge/episodic/decision)
             for c in selected_general_memories:
-                if c["memory_type"] in ("knowledge", "episodic", "decision"):
-                    standalone_memories.append(c)
+                if c["memory_type"] not in ("knowledge", "episodic", "decision"):
+                    continue
+                mem_entry = assembly_db_map.get(c["memory_id"])
+                if not mem_entry or not mem_entry.content:
+                    continue
 
-            memories_by_topic = defaultdict(list)
-            for c in standalone_memories:
-                memories_by_topic[c["topic_id"]].append(c)
+                label = c["memory_type"].upper()
+                ts = mem_entry.timestamp.strftime("%Y-%m-%d") if mem_entry.timestamp else None
+                date_attr = f' date="{ts}"' if ts else ""
 
-            for topic_id, mems in sorted(memories_by_topic.items()):
-                topic_name = mems[0]["name"]
-                mems_by_type = defaultdict(list)
-                for m in mems:
-                    mems_by_type[m["memory_type"]].append(m)
+                if label not in memory_parts_dict:
+                    memory_parts_dict[label] = []
 
-                for mtype in ("knowledge", "episodic", "decision"):
-                    type_mems = mems_by_type.get(mtype, [])
-                    if not type_mems:
-                        continue
+                if label == "DECISION":
+                    decision_context = getattr(mem_entry, "context", "")
+                    mem_lines = [f'<memory_item id="{c["memory_id"]}" type="DECISION"{date_attr}>']
+                    mem_lines.append(f"- Decision: {mem_entry.content}")
+                    if decision_context:
+                        mem_lines.append(f"- Context: {decision_context}")
+                    mem_lines.append("</memory_item>")
+                    memory_parts_dict["DECISION"].append("\n".join(mem_lines))
+                else:
+                    memory_parts_dict[label].append(
+                        f'<memory_item id="{c["memory_id"]}" type="{label}"{date_attr}>\n'
+                        f'- Content: {mem_entry.content}\n'
+                        f'</memory_item>'
+                    )
+                collected_leaf_ids.add(c["topic_id"])
 
-                    label = mtype.upper()
-                    lines = []
-                    for m in type_mems:
-                        mem_entry = assembly_db_map.get(m["memory_id"])
-                        if label == "DECISION":
-                            status = getattr(mem_entry, "status", "active") if mem_entry else "active"
-                            context = getattr(mem_entry, "context", "")
-                            header = f"[DECISION ({status})] | Context Behind this decision : {context}"
-                        else:
-                            header = ""
-                        if mem_entry and mem_entry.content:
-                            ts = mem_entry.timestamp.strftime("%Y-%m-%d %H:%M") if mem_entry.timestamp else None
-                            ts_line = f"[Recorded: {ts}]\n" if ts else ""
-                            lines.append(f"{header}{ts_line}{mem_entry.content}")
-
-                    if lines:
-                        content_str = "\n".join(lines)
-                        if label == "DECISION":
-                            header = f"{topic_name}"
-                        else:
-                            header = f"[{label}] {topic_name}"
-
-                        context_parts.append(
-                            f"{header}\n"
-                            f"{content_str}"
-                        )
-                        collected_leaf_ids.add(topic_id)
-
-            # 8d. Format individual branch summaries
+            # 8e. Format individual branch summaries
             branch_candidates = [c for c in selected_summaries if not c.get("is_leaf")]
 
             if use_summaries and branch_candidates:
@@ -697,10 +719,11 @@ class ActivePathRetrieval:
                     if not content.strip():
                         continue
                     collected_branch_ids.add(topic.id)
-                    header_tag  = "[BRANCH SUMMARY]"
-                    context_parts.append(
-                        f"{header_tag} {topic.name}\n"
-                        f"{content}\n"
+                    topic_attr = f' topic="{topic.name}"' if topic.name else ""
+                    summary_parts.append(
+                        f'<branch_summary{topic_attr}>\n'
+                        f'{content.strip()}\n'
+                        f'</branch_summary>'
                     )
             # Gather all unique expanded memories for tracking
             selected_expansions = []
@@ -719,7 +742,22 @@ class ActivePathRetrieval:
         t4 = time.time()
         logger.info(f"[Retrieval] DB fetch: {t4-t2:.3f}s")
 
-        full_context = "\n\n".join(context_parts)
+        final_blocks = []
+        if summary_parts:
+            final_blocks.append("<branch_summaries>\n" + "\n".join(summary_parts) + "\n</branch_summaries>")
+        
+        has_memories = any(memory_parts_dict.values())
+        if has_memories:
+            final_blocks.append("<retrieved_memories>\n")
+            # Enforce a consistent order
+            for mtype in ["DECISION", "USER", "KNOWLEDGE", "EPISODIC"]:
+                parts = memory_parts_dict.get(mtype, [])
+                if parts:
+                    tag_name = f"{mtype.lower()}_memories"
+                    final_blocks.append(f"<{tag_name}>\n" + "\n".join(parts) + f"\n</{tag_name}>\n")
+            final_blocks.append("</retrieved_memories>")
+        
+        full_context = "\n".join(final_blocks)
         full_context = re.sub(r'\n{3,}', '\n\n', full_context)
 
         total = time.time() - t0

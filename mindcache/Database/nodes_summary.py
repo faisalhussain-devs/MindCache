@@ -132,7 +132,7 @@ class RecursiveSummarizer:
             
             return "\n".join(lines)
 
-    def process_leaf(self, session, node, user_id):
+    def process_leaf(self, session, node, total_mems, user_id):
         """
         Processes database checks and memory/decision updates for a leaf node.
         Returns a dictionary with full_raw and delta_raw search texts if the leaf node has new data 
@@ -192,12 +192,21 @@ class RecursiveSummarizer:
                         delta_decisions[ts_key][did_str] = content
                         has_new = True
         if has_new:
-            existing_summary["desc_dirty"] = True
-            node.summary = json.dumps(existing_summary)
-            return {
-                "full_raw": self._format_leaf_summary(existing_summary),
-                "delta_raw": self._format_leaf_summary({"memories": delta_memories, "decisions": delta_decisions})
-            }
+            if total_mems <= 50:
+                existing_summary["desc_dirty"] = False
+                node.summary = json.dumps(existing_summary)
+                node.description = None
+                node.timestamp = datetime.now()
+                node.embedding = None
+                session.add(node)
+                return None
+            else:
+                existing_summary["desc_dirty"] = True
+                node.summary = json.dumps(existing_summary)
+                return {
+                    "full_raw": self._format_leaf_summary(existing_summary),
+                    "delta_raw": self._format_leaf_summary({"memories": delta_memories, "decisions": delta_decisions})
+                }
         return None
     
     def process_leaves_batched(self, session, leaf_nodes, user_id="default"):
@@ -214,14 +223,9 @@ class RecursiveSummarizer:
         to_create = []
         to_update = []
         skipped   = 0
-
         for node in leaf_nodes:
             total_mems = counts.get(node.id, 0)
-
-            if total_mems <= 50:
-                skipped += 1
-                continue
-            res = self.process_leaf(session, node, user_id=user_id)
+            res = self.process_leaf(session, node, total_mems, user_id=user_id)
 
             if not res:
                 existing_desc = (node.description or "").strip()
@@ -231,15 +235,27 @@ class RecursiveSummarizer:
                         if stored.get("desc_dirty") and (stored.get("memories") or stored.get("decisions")):
                             recovered = self._format_leaf_summary(stored)
                             if (recovered or "").strip():
-                                if not existing_desc:
-                                    logger.info(f"  [Leaf] '{node.name}' — no description, dirty summary. Recovering (create).")
-                                    to_create.append({"node": node, "raw_desc": recovered})
+                                if total_mems <= 50:
+                                    logger.info(f"  [Leaf] '{node.name}' (≤50 memories) — keeping description None without LLM.")
+                                    node.description = None
+                                    stored["desc_dirty"] = False
+                                    node.summary = json.dumps(stored)
+                                    node.timestamp = datetime.now()
+                                    node.embedding = None
+                                    session.add(node)
+                                    skipped += 1
                                 else:
-                                    logger.info(f"  [Leaf] '{node.name}' — description stale (dirty flag). Recovering (forcing full rebuild).")
-                                    to_create.append({"node": node, "raw_desc": recovered, "rebuild": True})
+                                    if not existing_desc:
+                                        logger.info(f"  [Leaf] '{node.name}' — no description, dirty summary. Recovering (create).")
+                                        to_create.append({"node": node, "raw_desc": recovered})
+                                    else:
+                                        logger.info(f"  [Leaf] '{node.name}' — description stale (dirty flag). Recovering (forcing full rebuild).")
+                                        to_create.append({"node": node, "raw_desc": recovered, "rebuild": True})
                                 continue
                     except Exception:
                         pass
+                if total_mems <= 50:
+                    skipped += 1
                 continue
 
             desc_update_count = 0
@@ -267,8 +283,10 @@ class RecursiveSummarizer:
                     "desc_update_count": desc_update_count,
                 })
 
+        session.commit()
+
         if skipped:
-            logger.info(f"  {skipped} leaf nodes skipped (≤50 memories, no summary needed).")
+            logger.info(f"  {skipped} leaf nodes updated directly without LLM (≤50 memories).")
 
         if not to_create and not to_update:
             logger.info("  No leaf nodes require LLM summary updates.")
@@ -443,12 +461,13 @@ class RecursiveSummarizer:
         
         if len(children) == 1:
             child = children[0]
-            node.summary = child.summary
-            node.timestamp = child.timestamp
-            node.embedding = None
-            node.description = child.description
-            session.add(node)
-            return
+            if child.description and not (child.description.startswith("[") or child.description.startswith("\n DECISIONS")):
+                node.summary = child.summary
+                node.timestamp = child.timestamp
+                node.embedding = None
+                node.description = child.description
+                session.add(node)
+                return
 
         sorted_children = sorted(children, key=lambda x: x.timestamp or datetime.min, reverse=True)
         try:
@@ -482,9 +501,8 @@ class RecursiveSummarizer:
         current_batch = []
         current_len = 0
         MAX_CHAR_LIMIT = 28000
-
-        node_ts = node.timestamp or datetime.min + 60
-
+        from datetime import timedelta
+        node_ts = node.timestamp or (datetime.min + timedelta(seconds=60))
         for child in sorted_children:
             child_ts = child.timestamp or datetime.min
             is_new = str(child.id) not in source_map and child.id not in ignored_ids
@@ -518,8 +536,7 @@ class RecursiveSummarizer:
                     current_len += len(update_str)
         if current_batch:
             updates_batches.append(current_batch)
-
-        if not updates_batches and source_map:
+        if not updates_batches:
             return 
         all_success = True
 
@@ -551,7 +568,6 @@ class RecursiveSummarizer:
             - Small children (few memories) are at risk of being missed entirely.
             - Give DISPROPORTIONATELY MORE space to small, rare, and unusual children.
             - Compress well-known, large-memory children into brief mentions."""
-
         for batch in updates_batches:
             child_text = "\n".join(batch)
             if not source_map and not ignored_ids:
@@ -633,15 +649,21 @@ class RecursiveSummarizer:
 
             try:
                 data = {}
+                if not response_json:
+                    raise ValueError("LLM returned empty or None response.")
                 if isinstance(response_json, str):
                     clean_json = response_json.replace("```json", "").replace("```", "")
                     s = clean_json.find("{")
                     e = clean_json.rfind("}")
                     if s != -1 and e != -1:
                         clean_json = clean_json[s:e+1]
-                    data = json.loads(clean_json)
-                else:
+                        data = json.loads(clean_json)
+                    else:
+                        raise ValueError("No JSON object found in string response.")
+                elif isinstance(response_json, dict):
                     data = response_json
+                else:
+                    raise ValueError(f"Unexpected response_json type: {type(response_json)}")
                 
                 if not source_map and not ignored_ids:
                     # Cold Start Response Logic
@@ -717,7 +739,7 @@ class RecursiveSummarizer:
             if not parent_nodes: continue
 
             logger.info(f"\n--- Processing Level {current_level} ({len(parent_nodes)} parent nodes) ---")
-
+            
             for node in parent_nodes:
                 self.process_parent(session, node, user_id, max_depth)
                 session.commit()
@@ -726,5 +748,10 @@ class RecursiveSummarizer:
         session.close()
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
     summarizer = RecursiveSummarizer()
     summarizer.run()

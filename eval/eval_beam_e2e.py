@@ -59,33 +59,49 @@ def adapt_beam(parquet_path: str, output_path: str, conv_index: int = 7) -> dict
         log.error(f"conv_index {conv_index} out of range — dataset has {len(df)} rows.")
         sys.exit(1)
 
-    r    = df.iloc[conv_index]
+    r       = df.iloc[conv_index]
     conv_id = r['conversation_id']
     chat    = r['chat']
     seed    = r['conversation_seed']
 
     def _flatten_session(sess):
         turns, seen = [], set()
+
+        def _extract_turn(t):
+            if isinstance(t, dict) and 'id' in t:
+                if t['id'] not in seen:
+                    seen.add(t['id'])
+                    turns.append(t)
+            elif hasattr(t, '__iter__') and not isinstance(t, (str, bytes, dict)):
+                for item in t:
+                    _extract_turn(item)
+
         if isinstance(sess, dict):
             for _, batches in sess.items():
                 if not batches:
                     continue
                 for batch in batches:
-                    if not isinstance(batch, dict):
-                        continue
-                    for tl in batch.get('turns', []):
-                        if isinstance(tl, dict):
-                            tl = [tl]
-                        for t in tl:
-                            if isinstance(t, dict) and 'id' in t and t['id'] not in seen:
-                                seen.add(t['id'])
-                                turns.append(t)
+                    if isinstance(batch, dict):
+                        for tl in batch.get('turns', []):
+                            _extract_turn(tl)
+                    elif hasattr(batch, '__iter__') and not isinstance(batch, (str, bytes, dict)):
+                        for t in batch:
+                            _extract_turn(t)
+        elif hasattr(sess, '__iter__') and not isinstance(sess, (str, bytes, dict)):
+            for item in sess:
+                if isinstance(item, dict) and 'turns' in item:
+                    for t in item.get('turns', []):
+                        _extract_turn(t)
+                else:
+                    _extract_turn(item)
         return turns
 
     flat = [_flatten_session(s) for s in chat]
+    title = seed.get('title', '?') if isinstance(seed, dict) else '?'
+    category = seed.get('category', '?') if isinstance(seed, dict) else '?'
     log.info(
-        f"[Stage 1] Conv #{conv_id}: '{seed.get('title','?')}' "
-        f"({seed.get('category','?')}) — "
+        f"[Stage 1] Conv #{conv_id}: '{title}' "
+        f"({category}) — "
         f"{len(chat)} sessions, {sum(len(s) for s in flat)} turns"
     )
 
@@ -93,7 +109,7 @@ def adapt_beam(parquet_path: str, output_path: str, conv_index: int = 7) -> dict
 
     sessions = []
     for si, turns in enumerate(flat):
-        ts = next((t['time_anchor'] for t in turns if t.get('time_anchor')), None)
+        ts = next((t['time_anchor'] for t in turns if isinstance(t, dict) and t.get('time_anchor')), None)
         clean_turns = []
         for t in turns:
             content = t['content']
@@ -152,8 +168,8 @@ def adapt_beam(parquet_path: str, output_path: str, conv_index: int = 7) -> dict
         "metadata": {
             "source":          "BEAM",
             "conversation_id": str(conv_id),
-            "title":           seed.get('title', ''),
-            "category":        seed.get('category', ''),
+            "title":           seed.get('title', '') if isinstance(seed, dict) else '',
+            "category":        seed.get('category', '') if isinstance(seed, dict) else '',
             "parquet_index":   conv_index,
             "total_sessions":  len(sessions),
             "total_turns":     sum(len(s['content']) for s in sessions),
@@ -176,20 +192,24 @@ def adapt_beam(parquet_path: str, output_path: str, conv_index: int = 7) -> dict
 
 # Stage 2 — Ingest adapted JSON using the MindCache Library
 
-def ingest_adapted(adapted_data: dict, db_path: str, user_id: str = "default"):
+def ingest_adapted(
+    adapted_data: dict, 
+    db_path: str, 
+    user_id: str = "default",
+):
     """
     Ingest the adapted dataset sessions using the MindCache SDK client.
     Queues all turns under session groups and processes them dynamically.
     """
-    # 1. Initialize client
-    mc = MindCache(db_path=db_path)
+    # 1. Initialize client in exhaustive mode for BEAM evaluation
+    mc = MindCache(db_path=db_path, enable_summarization=True)
     
     # 2. Reset the user database for a clean slate
-    mc.reset(user_id=user_id)
+    """mc.reset(user_id=user_id)
     
     # 3. Add all sessions via the client API
     sessions = adapted_data.get("sessions", [])
-    log.info(f"[Stage 2] Queuing {len(sessions)} sessions for user '{user_id}'...")
+    log.info(f"[Stage 2] Queuing {len(sessions)} sessions for user '{user_id}'")
     
     for session in sessions:
         ts = session.get("timestamp")
@@ -206,18 +226,25 @@ def ingest_adapted(adapted_data: dict, db_path: str, user_id: str = "default"):
                     timestamp_dt = datetime.fromisoformat(ts)
                 except Exception:
                     timestamp_dt = None
+        messages = []
+        for turn in session.get("content"):
+            # Queue the turns in this session
+            messages.append(turn)
+            if turn.get("role") == "assistant":
+                mc.add(
+                    messages=messages,
+                    user_id=user_id,
+                    timestamp=timestamp_dt
+                )
+                messages = []"""
 
-        # Queue the turns in this session
-        mc.add(
-            messages=session.get("content", []),
-            user_id=user_id,
-            timestamp=timestamp_dt
-        )
-        
-    log.info("[Stage 2] Processing queue (running automatic consolidation, batch embedding, and extraction)...")
-    # 4. Process all queued jobs (setting high limit to process the entire queue)
-    mc.process_queue(user_id=user_id, limit=9999, consolidation_max_tokens=4000)
-    log.info("[Stage 2] Ingestion complete.")
+    while True:    
+        log.info("[Stage 2] Processing queue (running automatic consolidation, batch embedding, and extraction)...")
+        # 4. Process all queued jobs (setting high limit to process the entire queue)
+        out = mc.process_queue(user_id=user_id, limit=30, consolidation_max_tokens=4000)
+        log.info("[Stage 2] Ingestion complete.")
+        if out == 0 or out == {"success": 0, "failed": 0}:
+            break
 
 
 # Stage 3 — Retrieval evaluation
@@ -241,7 +268,7 @@ def run_retrieval_eval(
         test_cases = test_cases[:limit]
 
     log.info(f"[Stage 3] Initialising MindCache (db={db_path}, user={user_id})")
-    mc = MindCache(db_path=db_path)
+    mc = MindCache(db_path=db_path, enable_summarization=True)
 
     results = []
     for i, tc in enumerate(test_cases):
@@ -255,7 +282,10 @@ def run_retrieval_eval(
 
         t0  = time.time()
         # Retrieve context string using standard API
-        context = mc.search(q_text, user_id=user_id, use_reranker=False)
+        result = mc.search(q_text, user_id=user_id)
+        context = result.context
+        query_type = result.query_type
+        sys_prompt = result.system_hint
         lat = round(time.time() - t0, 3)
 
         log.info(
@@ -264,10 +294,11 @@ def run_retrieval_eval(
         results.append({
             "question_id":       q_id,
             "question_type":     q_type,
-            "detected_type":     q_type,
+            "detected_type":     query_type,
             "question":          q_text,
             "expected":          expected,
             "rubric":            rubric,
+            "system_hint":       sys_prompt,
             "retrieved_context": context,
             "retrieval_latency": lat,
         })
@@ -288,7 +319,7 @@ if __name__ == "__main__":
         description="End-to-end BEAM evaluation for MindCache using library SDK.",
     )
     parser.add_argument("--parquet",       default="BEAM/1M-00000-of-00001.parquet")
-    parser.add_argument("--conv-index",    type=int, default=7)
+    parser.add_argument("--conv-index",    type=int, default=27)
     parser.add_argument("--db-path",       default="mindcache.db")
     parser.add_argument("--output-dir",    default="results")
     parser.add_argument("--user-id",       default="default")
@@ -296,6 +327,9 @@ if __name__ == "__main__":
     parser.add_argument("--skip-ingest",   action="store_true")
     parser.add_argument("--limit",         type=int, default=None)
     args = parser.parse_args()
+
+    # Set env vars for token and base_url if supplied
+
 
     os.makedirs(args.output_dir, exist_ok=True)
     if args.adapted_json is None:
@@ -305,7 +339,11 @@ if __name__ == "__main__":
 
     if not args.skip_ingest:
         adapted_data = adapt_beam(args.parquet, args.adapted_json, args.conv_index)
-        ingest_adapted(adapted_data, args.db_path, args.user_id)
+        ingest_adapted(
+            adapted_data = adapted_data, 
+            db_path      = args.db_path, 
+            user_id      = args.user_id,
+        )
     else:
         log.info(f"[Stage 1-2] Skipped — loading: {args.adapted_json}")
         with open(args.adapted_json, "r", encoding="utf-8") as f:

@@ -71,7 +71,9 @@ class SafeAI:
         while True:
             with cls._key_lock:
                 if len(cls._exhausted_keys) >= num_keys:
-                    raise AllKeysExhaustedError("All provided API keys have been exhausted.")
+                    logger.warning("[SafeAI] All keys temporarily rate-limited. Sleeping 15s before resetting key pool...")
+                    time.sleep(15)
+                    cls._exhausted_keys.clear()
                 
                 for offset in range(num_keys):
                     idx = (preferred_idx + offset) % num_keys
@@ -203,8 +205,8 @@ class SafeAI:
                         if "MAX_TOKENS" in finish_reason or "LENGTH" in finish_reason:
                             logger.info(f"[SafeAI] Output truncated ({finish_reason}). Attempting to salvage partial JSON...")
                             usage = data.get("usageMetadata", {})
-                            logger.info("Prompt tokens:", usage.get("promptTokenCount"))
-                            logger.info("Output tokens:", usage.get("candidatesTokenCount"))
+                            logger.info(f"Prompt tokens: {usage.get('promptTokenCount')}")
+                            logger.info(f"Output tokens: {usage.get('candidatesTokenCount')}")
                             return None
 
                     raw_text = self._extract_text(data)

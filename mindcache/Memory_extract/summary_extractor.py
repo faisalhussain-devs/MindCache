@@ -11,7 +11,7 @@ class Summary_Extractor():
         raw_json = llm.generate(
             prompt=prompt,
             system_prompt=self.sys_prompt,
-            retries=44
+            retries=100
         )
         if not raw_json:
             return None

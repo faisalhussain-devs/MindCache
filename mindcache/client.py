@@ -1,5 +1,4 @@
 import os
-import json
 from datetime import datetime
 
 from mindcache.Database.db_setup import init_db, ProcessingJob, MemoryRegistry, Topic, UserMemory, KnowledgeMemory, EpisodicMemory, DecisionMemory, Session
@@ -9,7 +8,7 @@ from mindcache.retrieval.active_path import ActivePathRetrieval
 from mindcache.Memory_extract.memory_extractor import Memory_Extractor
 import logging
 logger = logging.getLogger(__name__)
-REORG_THRESHOLD = 60
+REORG_THRESHOLD = 45
 
 class MindCache:
     """
@@ -37,7 +36,7 @@ class MindCache:
         gemini_api_key: str = None,
         provider: str = "gemini",
         model_name: str = "gemini-2.5-flash",
-        enable_summarization: bool = False
+        enable_summarization: bool = False,
     ):
         if db_path:
             os.environ["MINDCACHE_DB_PATH"] = db_path
@@ -60,26 +59,33 @@ class MindCache:
         self.Session = Session
         self.enable_summarization = enable_summarization
 
+
     def add(self, messages: list[dict], user_id: str = "default", timestamp: datetime = None) -> int:
-        """
+        """        
         Asynchronously queue a conversation session for ingestion.
         Writes a ProcessingJob to the SQLite database in milliseconds and returns the Job ID.
         """
+        import datetime as dt_module
+        if isinstance(timestamp, (int, float)):
+            timestamp = dt_module.datetime.fromtimestamp(timestamp)
+        elif isinstance(timestamp, str):
+            from dateutil.parser import parse as parse_dt
+            try:
+                timestamp = parse_dt(timestamp)
+            except Exception:
+                timestamp = dt_module.datetime.now()
+
         lines = []
         for msg in messages:
             role = msg.get("role", "unknown").capitalize()
             content = msg.get("content", "").strip()
             lines.append(f"{role}: {content}")
         raw_prompt = "\n".join(lines)
-        
-        turn_ids = [msg.get("turn_id") for msg in messages if msg.get("turn_id") is not None]
-        turn_ids_str = json.dumps(turn_ids) if turn_ids else "[]"
-        
+
         session = self.Session()
         try:
             new_job = ProcessingJob(
                 raw_prompt=raw_prompt,
-                turn_ids=turn_ids_str,
                 status="pending",
                 timestamp=timestamp or datetime.now(),
                 user_id=user_id
@@ -95,20 +101,21 @@ class MindCache:
         finally:
             session.close()
 
-    def _consolidate_jobs(self, user_id: str = "default", max_tokens: int = 4000) -> int:
+    def _consolidate_jobs(self, user_id: str = "default", max_tokens: int = 4000, hard_limit_tokens: int = 7000) -> int:
         """
         DB-level pre-step: merge small pending jobs for `user_id` into larger
         ProcessingJob rows, then delete the originals atomically in one commit.
 
         Token count: len(text) // 4  (4 characters = 1 token).
 
-        Only 'pending' jobs are eligible. Jobs already at or above max_tokens on
-        their own are left untouched. Single-job batches are never merged.
-
+        Uses max_tokens as a soft target (finishes the batch AFTER exceeding it),
+        and hard_limit_tokens as a strict ceiling (never exceeds this, breaks BEFORE).
+        
         Returns the number of original jobs consumed (deleted) by merging.
         """
-        max_chars = max_tokens * 4  # 1 token = 4 characters
-
+        soft_max_chars = max_tokens * 4  # 1 token = 4 characters
+        hard_max_chars = hard_limit_tokens * 4
+        final_jobs = 0
         session = self.Session()
         try:
             pending = (
@@ -117,10 +124,9 @@ class MindCache:
                     ProcessingJob.status == "pending",
                     ProcessingJob.user_id == user_id,
                 )
-                .order_by(ProcessingJob.timestamp, ProcessingJob.id)
+                .order_by(ProcessingJob.id)
                 .all()
             )
-
             if not pending:
                 return 0
 
@@ -128,47 +134,82 @@ class MindCache:
             batches: list = []
             current_parts: list = []
             current_ids: list = []
-            current_turn_ids: list = []
             current_chars: int = 0
             current_timestamp = None
 
             for job in pending:
-                ts_str = job.timestamp.strftime("%Y-%m-%d %H:%M") if job.timestamp else "unknown"
-                block = f"[{ts_str}]\n{job.raw_prompt}"
+                block = job.raw_prompt
                 block_chars = len(block)
 
-                if current_chars + block_chars > max_chars and current_parts:
+                ts_changed = False
+                if current_timestamp is not None and job.timestamp is not None:
+                    if hasattr(current_timestamp, "date") and hasattr(job.timestamp, "date"):
+                        ts_changed = (current_timestamp.date() != job.timestamp.date())
+                    else:
+                        ts_changed = (current_timestamp != job.timestamp)
+
+                # 1. Break BEFORE adding if it violates the HARD limit (or timestamp changes)
+                if (current_chars + block_chars > hard_max_chars or ts_changed) and current_parts:
                     batches.append({
                         "parts":     list(current_parts),
                         "ids":       list(current_ids),
-                        "turn_ids":  list(current_turn_ids),
                         "timestamp": current_timestamp,
                     })
                     current_parts.clear()
                     current_ids.clear()
-                    current_turn_ids.clear()
                     current_chars = 0
                     current_timestamp = None
 
+                # 2. Add the block
                 current_parts.append(block)
                 current_ids.append(job.id)
                 current_chars += block_chars
-                # Parse the stored JSON string into a list and accumulate
-                try:
-                    ids_for_job = json.loads(job.turn_ids) if job.turn_ids else []
-                except (ValueError, TypeError):
-                    ids_for_job = []
-                current_turn_ids.extend(ids_for_job)
-                if current_timestamp is None:
-                    current_timestamp = job.timestamp
+                current_timestamp = job.timestamp
+                
+                # 3. Break AFTER adding if we reached the SOFT target limit
+                if current_chars >= soft_max_chars:
+                    batches.append({
+                        "parts":     list(current_parts),
+                        "ids":       list(current_ids),
+                        "timestamp": current_timestamp,
+                    })
+                    current_parts.clear()
+                    current_ids.clear()
+                    current_chars = 0
+                    current_timestamp = None
 
             if current_parts:
                 batches.append({
                     "parts":     list(current_parts),
                     "ids":       list(current_ids),
-                    "turn_ids":  list(current_turn_ids),
                     "timestamp": current_timestamp,
                 })
+
+            # Post-pass: Backward-fold small leftover tail batches into their predecessor 
+            # if they share the exact same date and stay strictly within hard_limit_tokens.
+            merged_batches = []
+            for batch in batches:
+                if merged_batches:
+                    prev = merged_batches[-1]
+                    same_date = False
+                    if prev["timestamp"] is not None and batch["timestamp"] is not None:
+                        if hasattr(prev["timestamp"], "date") and hasattr(batch["timestamp"], "date"):
+                            same_date = (prev["timestamp"].date() == batch["timestamp"].date())
+                        else:
+                            same_date = (prev["timestamp"] == batch["timestamp"])
+                    
+                    prev_chars = sum(len(p) for p in prev["parts"])
+                    curr_chars = sum(len(p) for p in batch["parts"])
+                    
+                    if same_date and (prev_chars + curr_chars <= hard_max_chars):
+                        # Fold batch into prev!
+                        prev["parts"].extend(batch["parts"])
+                        prev["ids"].extend(batch["ids"])
+                        continue
+
+                merged_batches.append(batch)
+
+            batches = merged_batches
 
             # Only merge batches that contain more than one original job
             total_consumed = 0
@@ -177,31 +218,34 @@ class MindCache:
                     continue  # Already a single job — leave untouched
 
                 merged_prompt = "\n\n".join(batch["parts"])
-                merged_turn_ids = json.dumps(batch["turn_ids"])
+
+                first_id = batch["ids"][0]
+                rest_ids = batch["ids"][1:]
                 
+                # Update the very first job in the batch to hold the merged data.
+                # This perfectly preserves the chronological 'id' order in the database.
                 session.query(ProcessingJob).filter(
-                    ProcessingJob.id.in_(batch["ids"])
+                    ProcessingJob.id == first_id
+                ).update({
+                    "raw_prompt": merged_prompt,
+                    "timestamp": batch["timestamp"],
+                }, synchronize_session=False)
+
+                # Delete the remaining jobs that were merged into the first one
+                session.query(ProcessingJob).filter(
+                    ProcessingJob.id.in_(rest_ids)
                 ).delete(synchronize_session=False)
+                
                 session.flush()
 
-                # NOW insert the merged job (gets the next-highest id)
-                merged = ProcessingJob(
-                    raw_prompt=merged_prompt,
-                    turn_ids=merged_turn_ids,
-                    status="pending",
-                    timestamp=batch["timestamp"],
-                    user_id=user_id,
-                )
-                session.add(merged)
-                session.flush()  # Materialise the new id before the next batch
-
+                final_jobs += 1
                 total_consumed += len(batch["ids"])
 
             if total_consumed:
                 session.commit()
                 logger.info(
-                    f"[MindCache] Consolidated {total_consumed} small jobs for user '{user_id}' "
-                    f"(≤{max_tokens} tokens / {max_chars} chars per job)"
+                    f"[MindCache] Consolidated {total_consumed} small jobs for user '{user_id}' into {final_jobs} larger jobs "
+                    f"(target: ~{max_tokens} tokens, max: {hard_limit_tokens} tokens)"
                 )
 
             return total_consumed
@@ -220,6 +264,7 @@ class MindCache:
         limit: int = 30,
         max_retries: int = 5,
         consolidation_max_tokens: int = 4000,
+        consolidation_hard_limit_tokens: int = 7000,
     ) -> dict:
         """
         Run the memory extraction pipeline on queued jobs for a specific user.
@@ -230,7 +275,7 @@ class MindCache:
           3. Embed + extract + save each job (original per-job logic, unchanged).
         """
         # --- Step 1: DB-level consolidation (runs before limit fetch) ---
-        self._consolidate_jobs(user_id=user_id, max_tokens=consolidation_max_tokens)
+        self._consolidate_jobs(user_id=user_id, max_tokens=consolidation_max_tokens, hard_limit_tokens=consolidation_hard_limit_tokens)
 
         # --- Step 2: Fetch jobs (after consolidation) ---
         try:
@@ -284,7 +329,7 @@ class MindCache:
             try:
                 extracted_data = self.extractor.memory_extract(
                     job_data["raw_prompt"],
-                    query_embedding=job_data["embedding"]
+                    query_embedding=job_data["embedding"],
                 )
 
                 if not extracted_data:
@@ -350,13 +395,13 @@ class MindCache:
                 except Exception as reorg_err:
                     logger.warning(f"[MindCache Warning] Tree reorganisation failed: {reorg_err}")
 
-                if self.enable_summarization:
-                    logger.info(f"[MindCache] Running recursive summaries for user '{user_id}'...")
-                    from mindcache.Database.nodes_summary import RecursiveSummarizer
-                    try:
-                        RecursiveSummarizer().run(user_id=user_id)
-                    except Exception as sum_err:
-                        logger.warning(f"[MindCache Warning] Summarization job failed: {sum_err}")
+        if self.enable_summarization:
+            logger.info(f"[MindCache] Running recursive summaries for user '{user_id}'...")
+            from mindcache.Database.nodes_summary import RecursiveSummarizer
+            try:
+                RecursiveSummarizer().run(user_id=user_id)
+            except Exception as sum_err:
+                logger.warning(f"[MindCache Warning] Summarization job failed: {sum_err}")
 
         # Automatically refresh tree cache after a successful batch run
         if success > 0:
@@ -371,7 +416,6 @@ class MindCache:
                 logger.info(f"[MindCache] Updating cache incrementally for user '{user_id}'...")
                 from mindcache.Database.embedder import run_memory_embedding_job
                 run_memory_embedding_job(user_id=user_id)
-                
                 get_tree_cache.cache_clear()
                 cache = CollapsedTreeCache(user_id=user_id)
                 if not cache.is_ready:
@@ -435,7 +479,7 @@ class MindCache:
                 
         return {"success": success, "failed": failed}
 
-    def search(self, query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = True) -> str:
+    def search(self, query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = False) -> str:
         """
         Search for memories matching a query.
         Returns the formatted context string ready to inject into the LLM system prompt.
@@ -456,7 +500,7 @@ class MindCache:
                 include_summaries=self.enable_summarization,
                 use_reranker=use_reranker,
             )
-            return result.context
+            return result
         except Exception as e:
             raise RetrievalError(f"Search failed: {e}") from e
 
@@ -487,7 +531,8 @@ class MindCache:
                         "type": label,
                         "content": r.content,
                         "topic": r.topic.name if r.topic else "General",
-                        "timestamp": r.timestamp.isoformat() if r.timestamp else None
+                        "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                        "provenance": r.provenance,
                     }
                     if MemClass == DecisionMemory:
                         mem_data["status"] = r.status

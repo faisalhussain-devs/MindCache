@@ -1,7 +1,9 @@
+import logging
+import re
+
 from mindcache.Memory_extract.safe_ai import SafeAI
 from mindcache.Memory_extract.schema import ChatExtraction
-from mindcache.Database.db_manager import DatabaseManager
-import logging
+
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are MindCache — a personal memory extraction engine. Your job is NOT to transcribe conversations. It is to extract only what a future AI session could NOT know without this memory, and that would genuinely improve how it serves this specific user.
@@ -133,7 +135,8 @@ DO NOT create new topic nodes that are synonyms or near-duplicates of the paths 
 If an existing path fits even partially (same domain + sub-domain), prefer slotting the memory there.
 """
 
-class Memory_Extractor():
+
+class Memory_Extractor:
     def __init__(self, sys_prompt=SYSTEM_PROMPT, db_manager=None, model_name="gemini-2.5-flash", provider="gemini"):
         self.engine = SafeAI(model_name=model_name, provider=provider)
         self.sys_prompt = sys_prompt
@@ -141,63 +144,31 @@ class Memory_Extractor():
 
     @staticmethod
     def _clean_prompt(text: str) -> str:
-        """Aggressively strip noise that triggers Gemini repetition loops.
-        The LLM only needs the semantic content — not LaTeX formatting,
-        repeated backslashes, or 100-digit example numbers."""
-        import re
-
-        # 1. Tabs → space
-        text = text.replace('\t', ' ')
-
-        # 2. Double-escaped LaTeX: \\( ... \\) and \\[ ... \\]  (from raw BEAM)
-        text = re.sub(r'\\\\?\\\[', ' ', text)   # \[ or \\[
-        text = re.sub(r'\\\\?\\\]', ' ', text)   # \] or \\]
-        text = re.sub(r'\\\\?\\\(', '', text)     # \( or \\(
-        text = re.sub(r'\\\\?\\\)', '', text)     # \) or \\)
-
-        # 3. Repeated backslashes: 3+ → single
-        text = re.sub(r'\\{3,}', r'\\', text)
-
-
-        # 4. LaTeX commands: \text{...}, \quad, \cdot, \pmod, \gcd, \times, \equiv, \boxed
-        text = re.sub(r'\\(?:text|mathrm|mathbf|textbf)\{([^}]*)\}', r'\1', text)
-        text = re.sub(r'\\(?:boxed)\{([^}]*)\}', r'\1', text)
-        text = re.sub(r'\\(?:frac)\{([^}]*)\}\{([^}]*)\}', r'(\1/\2)', text)
-        text = re.sub(r'\\(?:quad|qquad|,|;|!)', ' ', text)
-        text = re.sub(r'\\(?:cdot|times)', '*', text)
-        text = re.sub(r'\\(?:equiv)', '≡', text)
-        text = re.sub(r'\\(?:pmod)\{([^}]*)\}', r'(mod \1)', text)
-        text = re.sub(r'\\(?:gcd|phi|lambda|sigma|tau|mu)', lambda m: m.group()[1:], text)
-        text = re.sub(r'\\(?:left|right|bigg?|Big)', '', text)
-
-        # 5. Remaining stray backslashes before letters (e.g. \implies, \therefore)
-        text = re.sub(r'\\([a-zA-Z]{2,})', r'\1', text)
-
-        # 6. Curly braces used for grouping: {p-1} → (p-1)
-        text = re.sub(r'\{([^}]{1,30})\}', r'(\1)', text)
-
-        # 7. Repeated newlines: 3+ → 2
-        text = re.sub(r'\n{3,}', '\n\n', text)
-
-        # 8. Repeated spaces: 3+ → 1
-        text = re.sub(r' {3,}', ' ', text)
-
-        # 9. Repeated special chars: ---, ===, ***, ___
-        text = re.sub(r'[-=*_]{4,}', '', text)
-
-        # 10. Very long numbers (20+ digits)
-        text = re.sub(r'\b\d{20,}\b', '[large_number]', text)
-
-        # 11. Repeated ^ : ^^^^ → ^
-        text = re.sub(r'\^{2,}', '^', text)
-
-        # 12. Code fences
-        text = re.sub(r'```[a-zA-Z]*\n', '\n', text)
-        text = re.sub(r'```', '', text)
-
-        # 13. Double dollar signs (another LaTeX display delimiter)
-        text = text.replace('$$', ' ')
-
+        """Remove formatting noise that is irrelevant to memory extraction."""
+        text = text.replace("\t", " ")
+        text = re.sub(r"\\\\?\\\[", " ", text)
+        text = re.sub(r"\\\\?\\\]", " ", text)
+        text = re.sub(r"\\\\?\\\(", "", text)
+        text = re.sub(r"\\\\?\\\)", "", text)
+        text = re.sub(r"\\{3,}", r"\\", text)
+        text = re.sub(r"\\(?:text|mathrm|mathbf|textbf)\{([^}]*)\}", r"\1", text)
+        text = re.sub(r"\\(?:boxed)\{([^}]*)\}", r"\1", text)
+        text = re.sub(r"\\(?:frac)\{([^}]*)\}\{([^}]*)\}", r"(\1/\2)", text)
+        text = re.sub(r"\\(?:quad|qquad|,|;|!)", " ", text)
+        text = re.sub(r"\\(?:cdot|times)", "*", text)
+        text = re.sub(r"\\(?:equiv)", "=", text)
+        text = re.sub(r"\\(?:pmod)\{([^}]*)\}", r"(mod \1)", text)
+        text = re.sub(r"\\(?:gcd|phi|lambda|sigma|tau|mu)", lambda match: match.group()[1:], text)
+        text = re.sub(r"\\(?:left|right|bigg?|Big)", "", text)
+        text = re.sub(r"\\([a-zA-Z]{2,})", r"\1", text)
+        text = re.sub(r"\{([^}]{1,30})\}", r"(\1)", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r" {3,}", " ", text)
+        text = re.sub(r"[-=*_]{4,}", "", text)
+        text = re.sub(r"\b\d{20,}\b", "[large_number]", text)
+        text = re.sub(r"\^{2,}", "^", text)
+        text = re.sub(r"```[a-zA-Z]*\n", "\n", text)
+        text = text.replace("```", "").replace("$$", " ")
         return text.strip()
 
     def memory_extract(self, prompt="", query_embedding: bytes = None):
@@ -210,14 +181,13 @@ class Memory_Extractor():
                 top_paths = self._db.get_top_leaf_paths(prompt, top_k=10, query_embedding=query_embedding)
                 if top_paths:
                     grounded = True
-                    formatted = "\n".join(f"  {i+1}. {p}" for i, p in enumerate(top_paths))
+                    formatted = "\n".join(f"  {i + 1}. {p}" for i, p in enumerate(top_paths))
                     final_prompt = prompt + GROUNDING_TEMPLATE.format(
                         top_k=len(top_paths),
-                        topic_paths=formatted
+                        topic_paths=formatted,
                     )
-            except Exception as e:
-                # If vector search fails (e.g. empty DB), fall back gracefully
-                logger.info(f"[SmartIngest] Vector lookup failed, continuing without grounding: {e}")
+            except Exception as exc:
+                logger.info("[SmartIngest] Vector lookup failed, continuing without grounding: %s", exc)
 
         self.last_extraction_grounded = grounded
 
@@ -226,13 +196,13 @@ class Memory_Extractor():
             system_prompt=self.sys_prompt,
             json_schema=ChatExtraction.model_json_schema(),
             max_tokens=25000,
-            temperature=0.7
+            temperature=0.7,
         )
         if not raw_json:
             return None
         try:
             validated_data = ChatExtraction.model_validate_json(raw_json)
             return validated_data.model_dump()
-        except Exception as e:
-            logger.info(f"[SafeAI] Validation Failed: {e}")
+        except Exception as exc:
+            logger.info("[SafeAI] Validation Failed: %s", exc)
             return None

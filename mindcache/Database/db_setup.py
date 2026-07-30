@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Enum, ForeignKey, DateTime, LargeBinary, event
+from sqlalchemy import create_engine, Column, Integer, String, Enum, ForeignKey, DateTime, LargeBinary, event, inspect, text
 from sqlalchemy.orm import declarative_base, relationship, backref, declared_attr
 from datetime import datetime
 
@@ -76,7 +76,6 @@ class ProcessingJob(Base):
     user_id = Column(String, default="default", index=True)
     timestamp = Column(DateTime, default=datetime.now)
     raw_prompt = Column(String)
-    turn_ids = Column(String)
     status = Column(String, default='pending') # pending, processing, failed
     retry_count = Column(Integer, default=0)
     embedding = Column(VectorType, nullable=True)  # BGE embedding of raw_prompt (timestamps stripped)
@@ -94,7 +93,6 @@ class Topic(Base):
     embedding = Column(VectorType)
     description = Column(String) # description of the node and its subnodes, helpful for retrieval
     timestamp = Column(DateTime, default=datetime.now) 
-    last_consolidated_at = Column(DateTime, nullable=True)
 
     parent_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
     children = relationship("Topic", 
@@ -116,7 +114,7 @@ class TriadBlock(Base):
     user_id = Column(String, default="default", index=True)
     timestamp = Column(DateTime, default=datetime.now)
     raw_msg = Column(String)
-    source_session_id = Column(String, nullable=True, index=True)  # Provenance: which session this came from
+    source_session_id = Column(String, nullable=True)
     generated_episodic = relationship("EpisodicMemory", back_populates="message")
     generated_user = relationship("UserMemory", back_populates="message")
     generated_knowledge = relationship("KnowledgeMemory", back_populates="message")
@@ -142,7 +140,7 @@ class BaseMemory(Base):
     user_id = Column(String, default="default", index=True)
     content = Column(String)
     timestamp = Column(DateTime, default=datetime.now)
-    source_message_ids = Column(String, nullable=True)
+    provenance = Column(String, nullable=True)
     embedding = Column(VectorType, nullable=True)  # Per-memory vector for individual retrieval
 
     @declared_attr
