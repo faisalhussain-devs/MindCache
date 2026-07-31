@@ -98,42 +98,8 @@ Final Assembled Context → LLM Prompt
 
 As conversations are ingested, MindCache continuously organizes extracted memories into a hierarchical topic tree. Rather than storing memories as a flat collection of embeddings, related concepts are grouped into increasingly specific topics. Leaf nodes contain memory clusters (e.g. `[memories: 47]`), while internal nodes provide semantic organization for retrieval and summarization.
 
-```
-Christmas
-├── Christmas Eve Dinner
-│   ├── Christmas Eve Dinner Components
-│   │   ├── Christmas Eve Culinary Aspects
-│   │   │   ├── Leftover Storage [memories: 5]
-│   │   │   ├── Meal Preparation [memories: 47]
-│   │   │   └── Menu
-│   │   │       ├── Beverage Options
-│   │   │       │   ├── General Beverage Options [memories: 7]
-│   │   │       │   └── Mulled Wine [memories: 6]
-│   │   │       ├── Dietary & Preference Accommodations
-│   │   │       │   ├── Allergy-Friendly Options [memories: 1]
-│   │   │       │   ├── General Dietary & Preference Accommodations [memories: 20]
-│   │   │       │   └── Vegan Options [memories: 6]
-│   │   │       ├── General Menu [memories: 39]
-│   │   │       └── Specific Food Items
-│   │   │           ├── Baklava [memories: 13]
-│   │   │           ├── Cheese Platter [memories: 16]
-│   │   │           ├── General Specific Food Items [memories: 3]
-│   │   │           ├── Spiced Lamb Recipe [memories: 24]
-│   │   │           ├── Turkish Delights [memories: 4]
-│   │   │           └── Vegan Risotto [memories: 3]
-│   ├── Christmas Eve Decorations
-│   │   ├── Decorative Elements
-│   │   │   ├── Handmade Decorations [memories: 25]
-│   │   │   ├── Photo Booth Accessories [memories: 5]
-│   │   │   ├── Pinecone Wreaths [memories: 10]
-│   │   │   └── Table Decor & Centerpieces [memories: 4]
-│   │   ├── General Christmas Eve Decorations [memories: 14]
-│   │   ├── General Decor & Ambiance [memories: 71]
-│   │   └── Lighting
-│   │       ├── General Lighting [memories: 2]
-│   │       ├── LED Candles [memories: 8]
-│   │       └── LED Lighting [memories: 2]
-```
+<img width="541" height="551" alt="Screenshot 2026-07-31 083954" src="https://github.com/user-attachments/assets/cc34f593-46c4-4369-b8ba-e2a16fca3f77" />
+
 
 > *This hierarchy is maintained incrementally as new conversations arrive and serves as the structural backbone for both hierarchical summarization and hybrid retrieval.*
 
