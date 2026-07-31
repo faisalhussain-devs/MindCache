@@ -185,8 +185,6 @@ class MindCache:
                     "timestamp": current_timestamp,
                 })
 
-            # Post-pass: Backward-fold small leftover tail batches into their predecessor 
-            # if they share the exact same date and stay strictly within hard_limit_tokens.
             merged_batches = []
             for batch in batches:
                 if merged_batches:
@@ -210,7 +208,6 @@ class MindCache:
                 merged_batches.append(batch)
 
             batches = merged_batches
-
             # Only merge batches that contain more than one original job
             total_consumed = 0
             for batch in batches:
@@ -222,8 +219,6 @@ class MindCache:
                 first_id = batch["ids"][0]
                 rest_ids = batch["ids"][1:]
                 
-                # Update the very first job in the batch to hold the merged data.
-                # This perfectly preserves the chronological 'id' order in the database.
                 session.query(ProcessingJob).filter(
                     ProcessingJob.id == first_id
                 ).update({
@@ -303,12 +298,14 @@ class MindCache:
                 # Detach data and close session to avoid transaction locking contention
                 jobs_data = []
                 for job in pending_jobs:
-                    jobs_data.append({
-                        "id":         job.id,
-                        "raw_prompt": job.raw_prompt,
-                        "embedding":  job.embedding,
-                        "timestamp":  job.timestamp,
-                    })
+                    prompt = job.raw_prompt
+                    if prompt is not None:
+                        jobs_data.append({
+                            "id":         job.id,
+                            "raw_prompt": job.raw_prompt,
+                            "embedding":  job.embedding,
+                            "timestamp":  job.timestamp,
+                        })
             finally:
                 session.close()
         except Exception as e:

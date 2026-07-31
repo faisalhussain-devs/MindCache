@@ -1,0 +1,24 @@
+======================================================================
+MINDCACHE TOPIC TREE
+======================================================================
+Total nodes  : 12
+Total roots  : 5
+Total leaves : 9
+======================================================================
+
+[L0: 6] General [leaf]
+
+[L0: 9] General [leaf]
+
+[L0: 2] Health [children:1]
+└── [L1: 3] Sleep [children:5]
+    ├── [L2: 10] Circadian Rhythms [leaf]
+    ├── [L2: 11] Environmental Factors [leaf]
+    ├── [L2: 7] Sleep Tracking [leaf]
+    ├── [L2: 8] Support System [leaf]
+    └── [L2: 12] Winding Down [leaf]
+
+[L0: 4] Personal Finance [children:1]
+└── [L1: 5] Purchasing Decisions [leaf]
+
+[L0: 1] User Profile [leaf]

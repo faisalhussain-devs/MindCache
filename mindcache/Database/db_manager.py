@@ -307,7 +307,7 @@ class DatabaseManager:
         finally:
             session.close()
 
-    def save_extracted_memory(self, job_id, raw_msg, extracted_data, source_session_id=None, session_timestamp=None, user_id="default"):
+    def save_extracted_memory(self, job_id, raw_msg, extracted_data, session_timestamp=None, user_id="default"):
         session = self.Session()
         try:
             # Timestamp priority: session_timestamp (dataset) > job.timestamp > now()
@@ -333,7 +333,6 @@ class DatabaseManager:
             new_message = TriadBlock(
                 raw_msg=raw_msg,
                 timestamp=ts,
-                source_session_id=source_session_id,
                 user_id=user_id
             )
             session.add(new_message)
