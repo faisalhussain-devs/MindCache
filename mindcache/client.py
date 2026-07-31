@@ -8,7 +8,7 @@ from mindcache.retrieval.active_path import ActivePathRetrieval
 from mindcache.Memory_extract.memory_extractor import Memory_Extractor
 import logging
 logger = logging.getLogger(__name__)
-REORG_THRESHOLD = 45
+REORG_THRESHOLD = 60
 
 class MindCache:
     """
@@ -477,7 +477,7 @@ class MindCache:
                     else:
                         logger.info("[MindCache] No new memories to ingest into CollapsedTreeCache.")
                 
-        return {"success": success, "failed": failed}
+        return {"success": success, "failed": failed, "tree": get_tree_cache(user_id=user_id)}
 
     def search(self, query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = False) -> str:
         """

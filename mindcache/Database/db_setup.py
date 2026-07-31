@@ -114,7 +114,6 @@ class TriadBlock(Base):
     user_id = Column(String, default="default", index=True)
     timestamp = Column(DateTime, default=datetime.now)
     raw_msg = Column(String)
-    source_session_id = Column(String, nullable=True)
     generated_episodic = relationship("EpisodicMemory", back_populates="message")
     generated_user = relationship("UserMemory", back_populates="message")
     generated_knowledge = relationship("KnowledgeMemory", back_populates="message")
@@ -140,7 +139,6 @@ class BaseMemory(Base):
     user_id = Column(String, default="default", index=True)
     content = Column(String)
     timestamp = Column(DateTime, default=datetime.now)
-    provenance = Column(String, nullable=True)
     embedding = Column(VectorType, nullable=True)  # Per-memory vector for individual retrieval
 
     @declared_attr
