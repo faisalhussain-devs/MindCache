@@ -1,22 +1,34 @@
 """
 MindCache Quickstart Example
 ----------------------------
-Demonstrates: initialize -> add conversations -> process_queue -> search
+Demonstrates: initialize -> add conversations -> process_queue -> auto view_topics -> search & visual format
 """
 import os
 import sys
+
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # Add project root to sys.path so we can import mindcache locally
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mindcache import MindCache
+from mindcache.Database.view_topics import print_topic_tree
+from mindcache.utils.format_context import format_retrieved_context
+
 
 def main():
     # 1. Initialize SDK
     # We will use a demo database file for this run
     db_path = "quickstart_demo.db"
     if os.path.exists(db_path):
-        os.remove(db_path)
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
 
     print("Initializing MindCache Client...")
     # NOTE: Set your GEMINI_API_KEY environment variable to test extraction.
@@ -39,16 +51,28 @@ def main():
     print("\nProcessing queue (running LLM extraction)...")
     try:
         results = mc.process_queue(user_id="alice")
-        print(f"Queue processed. Results: {results}")
+        print(f"Queue processed. Results: {results}\n")
     except Exception as e:
         print(f"Ingestion failed (did you set GEMINI_API_KEY?): {e}")
         return
 
-    # 4. Search retrieved context
-    print("\nSearching Alice's memories...")
-    context = mc.search("What is Alice's preferred database?", user_id="alice")
-    print("\nRetrieved Context:")
-    print(context)
+    # 4. Automatically print topic tree from Database/view_topics.py
+    print("=" * 70)
+    print("AUTOMATIC TOPIC TREE DISPLAY (view_topics.py)")
+    print("=" * 70)
+    session = mc.Session()
+    try:
+        print_topic_tree(session=session)
+    finally:
+        session.close()
+
+    # 5. Search retrieved context and output with beautiful visual formatting
+    query = "What is Alice's preferred database?"
+    print(f"\nSearching Alice's memories for: '{query}'...")
+    context = mc.search(query, user_id="alice")
+
+    # Beautiful Visual Formatting for Terminal & Video Demo
+    format_retrieved_context(context, query=query)
 
     # Clean up demo database
     from mindcache.Database.db_setup import engine
@@ -58,6 +82,7 @@ def main():
             os.remove(db_path)
         except Exception:
             pass
+
 
 if __name__ == "__main__":
     main()
