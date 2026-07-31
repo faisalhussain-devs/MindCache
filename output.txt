@@ -1,0 +1,176 @@
+======================================================================
+MINDCACHE TOPIC TREE
+======================================================================
+Total nodes  : 162
+Total roots  : 6
+Total leaves : 114
+Total memories: 1767
+======================================================================
+
+Christmas 
+├── Christmas Eve Dinner 
+│   ├── Christmas Eve Dinner Components 
+│   │   ├── Christmas Eve Culinary Aspects 
+│   │   │   ├── Leftover Storage [memories: 5]
+│   │   │   ├── Meal Preparation [memories: 47]
+│   │   │   └── Menu 
+│   │   │       ├── Beverage Options 
+│   │   │       │   ├── General Beverage Options [memories: 7]
+│   │   │       │   └── Mulled Wine [memories: 6]
+│   │   │       ├── Dietary & Preference Accommodations 
+│   │   │       │   ├── Allergy-Friendly Options [memories: 1]
+│   │   │       │   ├── General Dietary & Preference Accommodations [memories: 20]
+│   │   │       │   └── Vegan Options [memories: 6]
+│   │   │       ├── General Menu [memories: 39]
+│   │   │       └── Specific Food Items 
+│   │   │           ├── Baklava [memories: 13]
+│   │   │           ├── Cheese Platter [memories: 16]
+│   │   │           ├── General Specific Food Items [memories: 3]
+│   │   │           ├── Spiced Lamb Recipe [memories: 24]
+│   │   │           ├── Turkish Delights [memories: 4]
+│   │   │           └── Vegan Risotto [memories: 3]
+│   │   ├── Christmas Eve Decorations 
+│   │   │   ├── Decorative Elements 
+│   │   │   │   ├── Handmade Decorations [memories: 25]
+│   │   │   │   ├── Photo Booth Accessories [memories: 5]
+│   │   │   │   ├── Pinecone Wreaths [memories: 10]
+│   │   │   │   └── Table Decor & Centerpieces [memories: 4]
+│   │   │   ├── General Christmas Eve Decorations [memories: 14]
+│   │   │   ├── General Decor & Ambiance [memories: 71]
+│   │   │   └── Lighting 
+│   │   │       ├── General Lighting [memories: 2]
+│   │   │       ├── LED Candles [memories: 8]
+│   │   │       └── LED Lighting [memories: 2]
+│   │   └── Christmas Eve Guests & Attendees 
+│   │       ├── Elderly Guests [memories: 6]
+│   │       ├── General Christmas Eve Guests & Attendees [memories: 4]
+│   │       ├── General Guests & Attendees [memories: 26]
+│   │       └── Individual Attendees 
+│   │           ├── Christopher [memories: 15]
+│   │           ├── Jay [memories: 21]
+│   │           ├── Jordan [memories: 17]
+│   │           ├── Nicolas [memories: 18]
+│   │           └── Patricia [memories: 1]
+│   ├── Christmas Eve Dinner Management 
+│   │   ├── Christmas Eve Activities 
+│   │   │   ├── Contests & Games 
+│   │   │   │   ├── General Contests & Games [memories: 5]
+│   │   │   │   ├── Holiday Outfit Contest 
+│   │   │   │   │   ├── Attire Ideas [memories: 5]
+│   │   │   │   │   ├── Contest Prizes [memories: 8]
+│   │   │   │   │   ├── General Holiday Outfit Contest [memories: 12]
+│   │   │   │   │   └── Judging [memories: 6]
+│   │   │   │   ├── Interactive & Creative Activities 
+│   │   │   │   │   ├── Interactive Games & Challenges 
+│   │   │   │   │   │   ├── Gingerbread House Contest [memories: 10]
+│   │   │   │   │   │   └── Secret Santa [memories: 72]
+│   │   │   │   │   ├── Ornament Making [memories: 8]
+│   │   │   │   │   └── Themed Crafts [memories: 1]
+│   │   │   │   ├── Score Sheets [memories: 7]
+│   │   │   │   └── Trivia Game Management [memories: 9]
+│   │   │   ├── General Activities [memories: 57]
+│   │   │   ├── General Christmas Eve Activities [memories: 5]
+│   │   │   ├── Performance & Storytelling 
+│   │   │   │   ├── General Performance & Storytelling [memories: 3]
+│   │   │   │   ├── Performance And Visuals 
+│   │   │   │   │   ├── General Entertainment [memories: 56]
+│   │   │   │   │   ├── Karaoke 
+│   │   │   │   │   │   ├── General Karaoke [memories: 25]
+│   │   │   │   │   │   ├── Playlist [memories: 3]
+│   │   │   │   │   │   └── Warm-up Session [memories: 1]
+│   │   │   │   │   ├── Moment of Silence [memories: 3]
+│   │   │   │   │   ├── Slideshow [memories: 4]
+│   │   │   │   │   └── Trivia Question Clarity [memories: 3]
+│   │   │   │   └── Storytelling Session [memories: 17]
+│   │   │   ├── Photo Booth 
+│   │   │   │   ├── General Photo Booth [memories: 63]
+│   │   │   │   └── Photo Booth Setup [memories: 2]
+│   │   │   └── Thematic Activities 
+│   │   │       ├── Cultural Integration [memories: 7]
+│   │   │       └── Holiday Activities [memories: 1]
+│   │   ├── Christmas Eve Logistics 
+│   │   │   ├── Christmas Eve Logistics & Operations 
+│   │   │   │   ├── General Christmas Eve Logistics & Operations [memories: 4]
+│   │   │   │   ├── General Logistics & Operations [memories: 2]
+│   │   │   │   ├── Guest & Venue Management 
+│   │   │   │   │   ├── Guest Management [memories: 30]
+│   │   │   │   │   └── Venue Management 
+│   │   │   │   │       ├── General Venue Management [memories: 10]
+│   │   │   │   │       └── Temperature Management [memories: 2]
+│   │   │   │   ├── Resource & Infrastructure 
+│   │   │   │   │   ├── Backup Heating [memories: 15]
+│   │   │   │   │   └── Resource Allocation [memories: 2]
+│   │   │   │   ├── Safety & Emergency 
+│   │   │   │   │   ├── Fire Safety [memories: 22]
+│   │   │   │   │   └── Safety Protocols [memories: 34]
+│   │   │   │   └── Task Management 
+│   │   │   │       ├── delegated task execution detail [memories: 23]
+│   │   │   │       └── General Task Management [memories: 33]
+│   │   │   ├── Christmas Eve Planning 
+│   │   │   │   ├── Cultural & Personalization 
+│   │   │   │   │   ├── General Family Traditions [memories: 29]
+│   │   │   │   │   └── Personalized Ornaments Presentation [memories: 2]
+│   │   │   │   ├── Event Design 
+│   │   │   │   │   ├── Christmas Eve Ambiance & Activities 
+│   │   │   │   │   │   ├── Atmosphere [memories: 14]
+│   │   │   │   │   │   ├── Decoration Planning [memories: 22]
+│   │   │   │   │   │   ├── General Christmas Eve Ambiance & Activities [memories: 1]
+│   │   │   │   │   │   └── Music Playlist [memories: 60]
+│   │   │   │   │   └── Seating Arrangements [memories: 12]
+│   │   │   │   ├── General Christmas Eve Planning [memories: 2]
+│   │   │   │   ├── General Planning [memories: 74]
+│   │   │   │   ├── Resource Planning 
+│   │   │   │   │   ├── Catering [memories: 3]
+│   │   │   │   │   ├── Financial Planning 
+│   │   │   │   │   │   ├── budget allocation and spending [memories: 59]
+│   │   │   │   │   │   ├── Contingency Fund [memories: 21]
+│   │   │   │   │   │   ├── expense tracking and monitoring [memories: 33]
+│   │   │   │   │   │   └── General Budget Management [memories: 34]
+│   │   │   │   │   ├── Food & Beverage Planning [memories: 11]
+│   │   │   │   │   └── Support & Coordination [memories: 8]
+│   │   │   │   └── Transitions [memories: 11]
+│   │   │   ├── Cleanup [memories: 10]
+│   │   │   ├── Dress Code [memories: 35]
+│   │   │   └── Event Schedule [memories: 3]
+│   │   ├── General Christmas Eve Dinner Management [memories: 6]
+│   │   └── Social Interactions [memories: 26]
+│   ├── General Christmas Eve Dinner [memories: 30]
+│   └── Specific Event Details 
+│       ├── Event Location [memories: 2]
+│       └── Pre-Event Activities [memories: 18]
+└── Gift Management 
+    ├── Gift Planning [memories: 7]
+    └── Gift Wrapping Session 
+        ├── General Gift Wrapping Session [memories: 23]
+        └── Gift Wrapping [memories: 1]
+
+Events 
+├── Conflict Resolution [memories: 3]
+├── Event Preparation 
+│   ├── General Event Preparation [memories: 3]
+│   └── Sense of Accomplishment [memories: 3]
+├── General Event Planning 
+│   ├── Event Planning Strategy & Activities 
+│   │   ├── Event Activity Planning [memories: 3]
+│   │   ├── event planning strategy & coordination [memories: 50]
+│   │   └── Potluck Planning [memories: 4]
+│   ├── Event Timeline [memories: 25]
+│   └── General Event Planning Overview [memories: 3]
+├── General Events [memories: 32]
+└── Volunteer Appreciation [memories: 1]
+
+Family 
+├── Engagement & Connection [memories: 4]
+└── Photo & Video Albums [memories: 2]
+
+Stress Management 
+├── General Stress Management [memories: 4]
+└── personal event management & stress [memories: 31]
+
+Turkish Cuisine & Culinary 
+├── General Turkish Cuisine & Culinary [memories: 3]
+└── Traditional Dishes [memories: 2]
+
+User Profile 
+├── Biographical Information [memories: 1]
+└── General User Profile [memories: 23]
