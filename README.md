@@ -98,7 +98,7 @@ Decision-Anchor BM25 Expansion
 Final Assembled Context → LLM Prompt
 ```
 
-### 🌲 Automatically Organized Topic Hierarchy
+### 🌿 Automatically Organized Topic Hierarchy
 
 As conversations are ingested, MindCache continuously organizes extracted memories into a hierarchical topic tree. Rather than storing memories as a flat collection of embeddings, related concepts are grouped into increasingly specific topics. Leaf nodes contain memory clusters (e.g. `[memories: 47]`), while internal nodes provide semantic organization for retrieval and summarization.
 
@@ -113,42 +113,58 @@ As conversations are ingested, MindCache continuously organizes extracted memori
 
 ## ✨ Highlights
 
-- 🧠 **Structured Long-Term Memory**: Organizes raw turns into living knowledge hierarchies rather than flat vector pools.
-- 🏷️ **Four Memory Types**: Dedicated handling for User, Decision, Episodic, and Knowledge memories.
-- ⚖️ **Decision State Tracking**: Tracks evolving choices so past decisions don't overwrite current preferences.
-- ⚡ **Hybrid RRF Search**: Merges dense semantic vector search with sparse BM25 lexical matching via Reciprocal Rank Fusion.
-- 📜 **Incremental Summaries**: Bottom-up RAPTOR-style summaries for broad-topic and multi-session reasoning.
-- 🚀 **1.08s Retrieval Latency**: Production-ready, low-latency execution.
-- 🧪 **BEAM Benchmark Evaluated**: Tested across 300 questions on 1M and 10M token context windows.
+- 🌲 **Living Hierarchical Topic Tree**: Organizes raw turns into dynamic knowledge trees rather than flat vector pools.
+- 🧩 **Four Specialized Memory Types**: Dedicated handling for User, Decision, Episodic, and Knowledge memories.
+- 🎯 **Decision State Tracking**: Tracks evolving choices so past decisions don't overwrite current preferences.
+- 🔍 **Hybrid RRF Retrieval**: Merges dense semantic vector search with sparse BM25 lexical matching via Reciprocal Rank Fusion.
+- 📚 **Incremental Hierarchical Summaries**: Bottom-up RAPTOR-style summaries for broad-topic and multi-session reasoning.
+- ⚡ **1.08s Average Retrieval Latency**: Production-ready, low-latency execution.
+- 📊 **Evaluated on BEAM QA**: Tested across 300 questions on 1M and 10M token context windows.
 
 ---
 
-## 📊 Evaluation Summary
+## 📊 Evaluation
 
 MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchmark designed to evaluate retrieval across multi-session conversation histories at 1M and 10M token context windows (300 manually graded questions across 15 conversations).
 
-### Evaluation Overview
+### Benchmark Overview
 
-| Metric | Evaluation Setting / Result |
-| :--- | :--- |
-| **Benchmark** | BEAM QA Benchmark |
-| **Evaluated Dataset** | 300 questions across 15 multi-session conversations |
-| **Context Scale** | 1M and 10M token context windows |
-| **Average Retrieval Latency** | **1.08 seconds** |
-| **Hierarchical Summary Impact** | Typically 4–6 activations per conversation; consistently improved retrieval quality |
+| Metric | Result |
+| :--- | ---: |
+| Benchmark | BEAM QA |
+| Questions | 300 |
+| Conversations | 15 |
+| Context Windows | 1M / 10M |
+| Avg. Retrieval Latency | **1.08 s** |
+| Overall Performance | **Best among evaluated systems** |
 
-### Benchmark Evaluation Summary
+### System Comparison
 
-| System | Experiment Results | Memory & Retrieval Architecture |
-| :--- | :--- | :--- |
-| **MindCache** | 🥇 **Best overall performance in our evaluation*** | Living topic hierarchy, decision tracking & incremental summaries |
-| **Mem0** | 🥈 **Competitive baseline** | Flat Memory Store |
+| System | BEAM Benchmark Summary | Representative Follow-up Evaluation | Memory & Retrieval Architecture |
+| :--- | :--- | :--- | :--- |
+| **MindCache** | 🥇 **Best overall performance*** | Outperformed Mem0 across all manually analyzed conversations | Living topic hierarchy, decision tracking & incremental summaries |
+| **Mem0** | 🥈 **Competitive baseline** | Lower rubric scores and fewer passing answers across runs | Flat Memory Store |
 
 *\* Based on our evaluation of the BEAM benchmark (300 questions across 15 conversations). Full methodology and category breakdowns are described in the accompanying [design article](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian).*
 
----
+### Representative Follow-up Evaluation
 
-### Category Performance Breakdown
+To better understand the impact of the final architectural refinements, we manually evaluated representative BEAM conversations after completing the final retrieval architecture (hierarchical summaries, decision-anchor retrieval, retrieval budgeting, and hierarchical path indexing).
+
+Each conversation was evaluated using **two complementary metrics**:
+
+- **Strict Pass Rate** — A question was counted as a pass only if **all required rubric items were satisfied**. A strong answer missing a single required item was counted as a failure.
+- **Rubric Coverage** — The percentage of all rubric items satisfied across the evaluation. This captures partial correctness even when a question does not meet the strict pass threshold.
+
+| Conversation | Mem0 | MindCache | Improvement |
+| :--- | :--- | :--- | :--- |
+| **Conversation 1** | 40% pass (8/20) · 49.45% rubric coverage | **45% pass (9/20) · 57.20% rubric coverage** | +5 pp pass rate · +7.75 pp rubric coverage |
+| **Conversation 2** | 40% pass (8/20) · 42.9% rubric coverage (10.3/24) | **60% pass (12/20) · 61.3% rubric coverage (14.7/24)** | +20 pp pass rate · +18.4 pp rubric coverage |
+
+> **Observation:** The first conversation was intentionally challenging and evaluated using a strict all-or-nothing criterion. While the strict pass rate differed by only one question (8 vs. 9), the rubric coverage shows that MindCache satisfied substantially more evaluation criteria overall—indicating stronger partial reasoning even on questions that narrowly missed the strict pass threshold. The second conversation shows a larger separation across both metrics following the full refinement stack.
+
+
+### Performance by Task
 
 - **Information Extraction** (`Mem0 ≈ MindCache`): Mem0 and MindCache performed comparably. MindCache is more conservative and refrains from hallucinating specifics when retrieval context is ambiguous.
 - **Temporal Reasoning** (`Advantage: MindCache`): MindCache accurately reconstructs multi-month timelines, recovery schedules, and chronological event sequences.
@@ -172,7 +188,7 @@ MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchm
 
 ---
 
-## 🔬 Key Architectural Findings
+## 🧠 Design Insights
 
 During the development and evaluation of MindCache, we experimented with multiple memory organization and retrieval strategies. **Five architectural decisions consistently emerged as valuable during development and were retained in the final system. One of these (hierarchical summaries) was quantitatively evaluated, while the remaining decisions are supported by repeated manual inspection and iterative testing.**
 
@@ -261,7 +277,7 @@ Available for High-Level Summarization Queries
 
 ## 📦 Core Features
 
-### 🌲 Memory Organization
+### 🗂️ Memory Organization
 - **Living Hierarchical Topic Tree**: Dynamically builds topic nodes to organize memories logically.
 - **Dynamic Graph Restructuring**: Performs Leiden graph partitioning, leaf node splitting, and sibling merging as memory grows.
 - **Incremental Delta Summaries**: Generates bottom-up summaries processing only new leaf entries (deltas) to save LLM tokens.
@@ -279,7 +295,7 @@ Available for High-Level Summarization Queries
 
 ---
 
-## 🏗️ Architecture Overview
+## ⚙️ Architecture Overview
 
 The MindCache pipeline operates in three distinct phases:
 
@@ -375,7 +391,6 @@ flowchart LR
 
 - **Summary Compression**: Bottom-up node summaries can occasionally compress away fine-grained named entities or specific numeric values.
 - **Ambiguity Resolution**: When multiple candidate memories closely match a query, retrieval logic errs on the side of caution/abstention rather than making a guess.
-- **Automatic Summary Refinement**: Incremental delta updates work continuously, but full background re-summarization during major tree re-organizations is under active development.
 
 ---
 
