@@ -9,16 +9,20 @@ Instead of storing conversations as a flat collection of embedding vectors, Mind
 [![PyPI version](https://img.shields.io/badge/pypi-v0.1.0-blue)](https://pypi.org/project/mindcache/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Medium Blog](https://img.shields.io/badge/Read_Design_Blog-Medium-black?logo=medium)](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian)
+[![YouTube Demo](https://img.shields.io/badge/Watch_Demo-YouTube-red?logo=youtube)](https://www.youtube.com/watch?v=wcTQkyN1CoM)
 
 ---
 
-👉 **[Read the Design Article](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian)** &nbsp;|&nbsp; 🎥 **Watch the Demo (Coming Soon)** &nbsp;|&nbsp; ⚡ **[Quick Start](#-quick-start-30-seconds)**
+👉 **[Read the Design Article](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian)** &nbsp;|&nbsp; 🎥 **[Watch Demo Video](https://www.youtube.com/watch?v=wcTQkyN1CoM)** &nbsp;|&nbsp; ⚡ **[Quick Start](#-quick-start-30-seconds)**
 
 ---
 
 ## 📹 Demo
 
-*(45–60 second Demo GIF showing installation, adding conversations, queue processing, inspecting the topic hierarchy, and performing multi-session retrieval context assembly)*
+A 2-minute walkthrough covering installation, ingestion, automatic hierarchy generation, and hybrid retrieval.
+
+[![MindCache Demo Video](https://img.youtube.com/vi/wcTQkyN1CoM/maxresdefault.jpg)](https://www.youtube.com/watch?v=wcTQkyN1CoM)
+> 🎥 **[Watch the MindCache Walkthrough & Demo on YouTube](https://www.youtube.com/watch?v=wcTQkyN1CoM)**
 
 ---
 
@@ -98,7 +102,9 @@ Final Assembled Context → LLM Prompt
 
 As conversations are ingested, MindCache continuously organizes extracted memories into a hierarchical topic tree. Rather than storing memories as a flat collection of embeddings, related concepts are grouped into increasingly specific topics. Leaf nodes contain memory clusters (e.g. `[memories: 47]`), while internal nodes provide semantic organization for retrieval and summarization.
 
-<img width="541" height="551" alt="Screenshot 2026-07-31 083954" src="https://github.com/user-attachments/assets/cc34f593-46c4-4369-b8ba-e2a16fca3f77" />
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/cc34f593-46c4-4369-b8ba-e2a16fca3f77" width="700" alt="Automatically Organized Topic Hierarchy" />
+</p>
 
 
 > *This hierarchy is maintained incrementally as new conversations arrive and serves as the structural backbone for both hierarchical summarization and hybrid retrieval.*
@@ -129,7 +135,7 @@ MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchm
 | **Evaluated Dataset** | 300 questions across 15 multi-session conversations |
 | **Context Scale** | 1M and 10M token context windows |
 | **Average Retrieval Latency** | **1.08 seconds** |
-| **Hierarchical Summary Impact** | 6 activations / 5 improvements / 2 failure-to-pass conversions |
+| **Hierarchical Summary Impact** | Typically 4–6 activations per conversation; consistently improved retrieval quality |
 
 ### Benchmark Evaluation Summary
 
@@ -147,7 +153,7 @@ MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchm
 - **Information Extraction** (`Mem0 ≈ MindCache`): Mem0 and MindCache performed comparably. MindCache is more conservative and refrains from hallucinating specifics when retrieval context is ambiguous.
 - **Temporal Reasoning** (`Advantage: MindCache`): MindCache accurately reconstructs multi-month timelines, recovery schedules, and chronological event sequences.
 - **Multi-session Reasoning** (`Advantage: MindCache`): MindCache excels at connecting memories across separate sessions, tracking how user preferences evolve over time.
-- **Summarization** (`Advantage: MindCache`): During follow-up evaluation, hierarchical summaries were activated on 6/20 complex benchmark queries, improving performance on 5 of them and directly converting 2 previously failing cases into passing scores.
+- **Summarization** (`Advantage: MindCache`): Across our follow-up evaluation runs, hierarchical summaries typically activated on 4–6 broad queries per conversation and consistently improved retrieval quality, including multiple failure-to-pass conversions.
 - **Robustness & Abstention** (`Advantage: MindCache`): When information is missing, MindCache explicitly abstains ("context does not contain this") rather than fabricating incorrect details (e.g., wrong dates or numbers).
 
 ---
@@ -178,7 +184,7 @@ Rather than filling the context window with the globally highest-scoring memorie
 
 ### 3. Dynamic Hierarchical Tree & Incremental Summaries
 Incremental RAPTOR-style hierarchical summaries improved retrieval for broad multi-topic queries where semantic vector search alone often struggled. 
-> **Evaluation Finding**: In direct evaluation across 20 complex benchmark queries, hierarchical summaries were triggered on 6 queries, positively impacting 5 of them and directly converting 2 previous failures into passing scores (specifically for summarization and temporal-ordering tasks).
+> **Evaluation Finding**: Across our follow-up evaluation runs, hierarchical summaries typically activated on 4–6 broad queries per conversation and consistently improved retrieval quality, including multiple failure-to-pass conversions.
 
 ### 4. Decision-Guided Retrieval (Decision Anchors)
 Top-ranked Decision memories act as semantic anchors. MindCache extracts key concepts from active decisions and performs BM25 lexical expansion to pull in supporting Episodic and Knowledge memories that standard vector search can miss—especially when the user prompt contains few discriminative keywords.
@@ -190,7 +196,7 @@ Stored memories index their complete tree path (e.g., `Artificial Intelligence �
 
 | Finding | Evaluation Evidence | Evidence Level |
 | :--- | :--- | :--- |
-| **Hierarchical summaries** | 6 activations, improved 5, converted 2 failures | 📊 **Quantitatively Supported** |
+| **Hierarchical summaries** | Typically 4–6 activations per conversation; consistently improved retrieval quality | 📊 **Quantitatively Supported** |
 | **Decision anchors** | Manual retrieval analysis across development | 🔍 **Observed in Development** |
 | **Hierarchical path indexing** | Manual inspection of retrieved evidence across representative queries | 🔍 **Observed in Development** |
 | **Four memory types** | Architectural schema refinement | 🏗️ **Design Rationale** |
@@ -279,31 +285,28 @@ The MindCache pipeline operates in three distinct phases:
 
 ### Phase 1 — Offline Ingestion Pipeline
 ```mermaid
-flowchart TD
+flowchart LR
     classDef dark      fill:#313244,color:#cdd6f4,stroke:#585b70
     classDef llm       fill:#cba6f7,color:#11111b,stroke:#11111b
     classDef tree      fill:#89dceb,color:#11111b,stroke:#11111b
     classDef yellow    fill:#f9e2af,color:#11111b,stroke:#11111b
     classDef green     fill:#a6e3a1,color:#11111b,stroke:#11111b
-    classDef analyzer  fill:#f38ba8,color:#11111b,stroke:#11111b
 
-    A["💬 Raw Turn"]:::dark --> B{"🤖 Worth Remembering?"}:::llm
-    B -- No --> C["Ignore & Return"]:::dark
-    B -- Yes --> D["🌲 Fetch Top-K Topic Paths"]:::tree
-    D --> E["Smart Grounded Routing"]:::llm
-    E --> F["🤖 Extract & Classify Memories"]:::llm
-    F --> G["Save to Topic Tree Path"]:::tree
-    G --> H{"Batch Complete?"}:::dark
-    
-    H -- Yes --> I["🔍 Analyze Decision States"]:::analyzer
-    I --> J{"⏱️ Crossed REORG_THRESHOLD?"}:::yellow
-    
-    J -- No --> K["Refresh Cache & Persist"]:::green
-    J -- Yes --> L["✂️ Reorganize Tree\n(Leiden Partitioning / Split / Merge)"]:::yellow
-    L --> M{"Summarization Enabled?"}:::yellow
-    M -- Yes --> N["📜 Generate Delta Summaries"]:::llm
-    M -- No --> K
-    N --> K
+    subgraph Ingest ["1. Ingestion & Grounded Routing"]
+        A["💬 Turn"]:::dark --> B{"Worth Keeping?"}:::llm
+        B -- Yes --> C["🌲 Grounded Routing"]:::tree
+        C --> D["🤖 Extract & Save"]:::llm
+    end
+
+    subgraph Reorg ["2. Batch Reorganization & Summaries"]
+        D --> E["🔍 Decision Analyzer"]:::yellow
+        E --> F{"Reorg Threshold?"}:::yellow
+        F -- Yes --> G["✂️ Reorganize Tree"]:::yellow
+        G --> H["📜 Delta Summaries"]:::llm
+    end
+
+    H --> OUT["Refresh & Persist"]:::green
+    F -- No --> OUT
 ```
 > *Phase 1 — Offline ingestion pipeline: queueing, grounded routing, extraction, decision analysis, and reorganization trigger.*
 
@@ -340,29 +343,29 @@ flowchart LR
 
 ### Phase 3 — Online Multi-Stage Hybrid Retrieval Engine
 ```mermaid
-flowchart TD
+flowchart LR
     classDef dark      fill:#313244,color:#cdd6f4,stroke:#585b70
     classDef llm       fill:#cba6f7,color:#11111b,stroke:#11111b
     classDef search    fill:#89b4fa,color:#11111b,stroke:#11111b
     classDef anchor    fill:#f38ba8,color:#11111b,stroke:#11111b
     classDef green     fill:#a6e3a1,color:#11111b,stroke:#11111b
 
-    Q["🔎 User Query"]:::dark --> A["Context Bridge & Embed"]:::dark
-    A --> B["Score (Vector + BM25)"]:::search
-    B --> C["Reciprocal Rank Fusion RRF"]:::search
-    
-    C --> D["🏷️ Classify Query\n(Broad vs Fact / Temporal)"]:::llm
-    
-    D --> E["Partitioned Candidate Retrieval"]:::search
-    E --> F["Memory Pools\n(User / Knowledge / Episodic / Decision)"]:::search
-    D -->|"If Broad Query"| G["📜 Summaries Pool"]:::search
-    
-    F & G --> H["⚖️ Get Top 3 Decisions"]:::anchor
-    H --> I["BM25 Anchor Expansion"]:::anchor
-    I --> J["Deduplicate Candidates"]:::search
-    
-    F & J --> K["📋 Inject Directives\n(Profile, Recency, Abstention)"]:::anchor
-    K --> OUT["📤 Final Context → LLM Prompt"]:::green
+    subgraph PhaseA ["1. Hybrid RRF Search"]
+        Q["🔎 User Query"]:::dark --> S["Vector + BM25"]:::search
+        S --> RRF["Reciprocal Rank Fusion"]:::search
+    end
+
+    subgraph PhaseB ["2. Memory Pools & Anchors"]
+        RRF --> CL["🏷️ Query Classifier"]:::llm
+        CL --> P["Memory Pools & Summaries"]:::search
+        P --> DA["⚖️ Decision Anchors"]:::anchor
+        DA --> EX["BM25 Anchor Expansion"]:::anchor
+    end
+
+    subgraph PhaseC ["3. Prompt Assembly"]
+        EX --> INJ["📋 Inject Directives"]:::anchor
+        INJ --> OUT["📤 Final Context → LLM"]:::green
+    end
 ```
 > *Phase 3 — Online multi-stage hybrid retrieval engine: RRF scoring, memory pool partitioning, decision-anchor expansion, and prompt assembly.*
 
@@ -376,69 +379,36 @@ flowchart TD
 
 ---
 
-## 🗺️ Roadmap
-
-- [x] **Hierarchical Topic Tree**: Dynamic memory organization.
-- [x] **Decision State Machine**: Tracking active vs superseded choices.
-- [x] **Incremental Delta Summaries**: Token-efficient rollup summaries.
-- [x] **BM25 Union-Find Aliasing**: Morphological term matching.
-- [ ] **Utility-Aware Memories**: Automatic memory importance scoring based on access patterns.
-- [ ] **Automatic Memory Aging & Decay**: Time-decay scoring for low-relevance episodic memories.
-- [ ] **Multi-Agent Shared Memory**: Safe cross-agent memory partitions with capability-based access controls.
-
----
-
 ## ⚙️ Configuration & Database Setup
 
-MindCache adapts to your environment automatically. It supports SQLite out-of-the-box for local development and PostgreSQL (with `pgvector`) for production scaling.
+MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for production workloads.
 
-### Database Backend Setup
+- ⚙️ **SQLite**: Default local setup (`mindcache.db`).
+- 🐘 **PostgreSQL**: Set `MINDCACHE_DB_URL="postgresql://..."` or pass to `MindCache(db_path=...)`.
 
-#### SQLite (Default)
-- **Default**: Creates `mindcache.db` in the current working directory.
-- **Custom Path**: Pass `db_path="path/to/my_memory.db"` to constructor or set `MINDCACHE_DB_PATH` environment variable.
-
-#### PostgreSQL (with pgvector)
-Ensure the `vector` extension is enabled on your PostgreSQL instance (`CREATE EXTENSION IF NOT EXISTS vector;`):
-```bash
-export MINDCACHE_DB_URL="postgresql://user:password@localhost:5432/my_database"
-```
-Or pass the URL directly to constructor:
-```python
-mc = MindCache(db_path="postgresql://user:password@localhost:5432/my_database")
-```
-
-### Configuration Options
-
-| Setting | Type | Location | Default | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `enable_summarization` | `bool` | Client Constructor | `False` | Enables bottom-up delta summaries of topic tree nodes to support broad overview queries. |
-| `use_reranker` | `bool` | `.search()` Method | `True` | Applies the ~600MB Jina v2 Cross-Encoder model. Set to `False` to use hybrid RRF ordering for **1.08s low-latency retrieval**. |
+👉 **[View Full Configuration & Setup Guide](docs/configuration.md)**
 
 ---
 
 ## 📡 API Reference
 
-### Client Constructor
+- **`add(messages, user_id)`**: Buffer conversation turns into the ingestion queue.
+- **`process_queue(user_id)`**: Drain queue, extract memories, and update tree summaries.
+- **`search(query, user_id)`**: Retrieve formatted context for LLM prompt injection.
+- **`get_all()`** / **`delete()`** / **`reset()`**: Manage stored user memories.
 
-```python
-mc = MindCache(
-    db_path: str = "mindcache.db",      # SQLite path OR PostgreSQL connection URL
-    gemini_api_key: str = None,         # API key (or set GEMINI_API_KEY env var)
-    provider: str = "gemini",           # Provider: "gemini" | "openai" | "anthropic"
-    model_name: str = "gemini-2.5-flash",
-    enable_summarization: bool = False  # Enable incremental bottom-up summaries
-)
-```
+👉 **[View Complete API Reference](docs/API.md)**
 
-### Methods
+---
 
-- **`add(messages: list[dict], user_id: str = "default") -> int`**: Buffers conversation turns into the ingestion queue. Returns Ingestion Job ID.
-- **`process_queue(user_id: str = "default", limit: int = None) -> dict`**: Drains queue, extracts structured memories, updates decision states, and triggers tree reorganization/summaries.
-- **`search(query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = True) -> str`**: Retrieves formatted context for LLM prompt injection. Set `use_reranker=False` for ~1.08s latency.
-- **`get_all(user_id: str = "default", memory_type: str = None) -> list[dict]`**: Retrieves stored memories for a user, optionally filtered by `memory_type` (`user`, `knowledge`, `episodic`, `decision`).
-- **`delete(memory_id: int, user_id: str = "default") -> bool`**: Deletes a specific memory entry by ID.
-- **`reset(user_id: str = "default") -> None`**: Clears all stored data for a user.
+## 🗺️ Roadmap
+
+- [x] **Hierarchical Topic Tree**: Dynamic graph organization.
+- [x] **Decision State Machine**: Evolving choice tracking.
+- [x] **Incremental Delta Summaries**: Bottom-up rollup summaries.
+- [ ] **Utility-Aware Memories**: Access-pattern importance scoring.
+- [ ] **Automatic Memory Aging**: Time-decay scoring for episodic memories.
+- [ ] **Multi-Agent Shared Memory**: Capability-based shared memory partitions.
 
 ---
 

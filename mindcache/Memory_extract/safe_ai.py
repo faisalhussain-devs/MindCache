@@ -62,6 +62,68 @@ class SafeAI:
             )
         return [single_key.strip()]
 
+    @staticmethod
+    def _load_keys() -> list[str]:
+        config_dir = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "config",
+        )
+
+        # Look for keys.text or keys.txt
+        for filename in ("keys.text", "keys.txt"):
+            path = os.path.join(config_dir, filename)
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return [line.strip() for line in f if line.strip()]
+
+        for filename in ("config/keys.text", "config/keys.txt"):
+            if os.path.exists(filename):
+                with open(filename, "r", encoding="utf-8") as f:
+                    return [line.strip() for line in f if line.strip()]
+
+        # Generic multi-key environment variable
+        keys = os.getenv("API_KEYS")
+        if keys:
+            return [k.strip() for k in keys.split(",") if k.strip()]
+
+        # Provider-specific multi-key variables
+        for env in (
+            "GEMINI_API_KEYS",
+            "OPENAI_API_KEYS",
+            "ANTHROPIC_API_KEYS",
+            "OPENROUTER_API_KEYS",
+        ):
+            keys = os.getenv(env)
+            if keys:
+                return [k.strip() for k in keys.split(",") if k.strip()]
+
+        # Generic single key
+        key = os.getenv("API_KEY")
+        if key:
+            return [key.strip()]
+
+        # Provider-specific single keys
+        for env in (
+            "GEMINI_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+        ):
+            key = os.getenv(env)
+            if key:
+                return [key.strip()]
+
+        raise EnvironmentError(
+            "No API keys found.\n"
+            "Provide one of:\n"
+            "  • config/keys.text (or keys.txt)\n"
+            "  • API_KEYS / API_KEY\n"
+            "  • GEMINI_API_KEYS / GEMINI_API_KEY\n"
+            "  • OPENAI_API_KEYS / OPENAI_API_KEY\n"
+            "  • ANTHROPIC_API_KEYS / ANTHROPIC_API_KEY\n"
+            "  • OPENROUTER_API_KEYS / OPENROUTER_API_KEY"
+        )
+
     @classmethod
     def _acquire_key(cls, preferred_idx: int) -> int:
         keys = cls._keys_loaded
