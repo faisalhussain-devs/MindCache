@@ -32,7 +32,27 @@ optimize = [
     "igraph>=0.9.0",
     "leidenalg>=0.8.0"
 ]
+postgres = [
+    "pgvector>=0.2.0"
+]
+eval = [
+    "pandas>=1.5.0",
+    "pyarrow>=10.0.0"
+]
+test = [
+    "pytest>=7.0.0"
+]
+dev = [
+    "pytest>=7.0.0",
+    "pandas>=1.5.0",
+    "pyarrow>=10.0.0",
+    "scikit-learn>=1.0.0",
+    "igraph>=0.9.0",
+    "leidenalg>=0.8.0",
+    "pgvector>=0.2.0"
+]
 
 [tool.setuptools]
 packages = ["mindcache", "mindcache.Database", "mindcache.Memory_extract", "mindcache.retrieval"]
 package-dir = { "" = "." }
+
