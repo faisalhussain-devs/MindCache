@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from mindcache.retrieval.root_cache import CollapsedTreeCache, CollapsedTreeCacheData, UnionFind, MemoryMeta, NodeMeta
+from mindcache.retrieval.root_cache import CollapsedTreeCache, CollapsedTreeCacheData, UnionFind, MemoryMeta
 
 def test_union_find_basic():
     uf = UnionFind()
@@ -178,7 +178,7 @@ def test_incremental_memory_ingestion():
     
     # Verify embedding matrix shape updated in-place
     assert cache._data.embedding_matrix.shape == (2, 5)
-    assert np.allclose(cache._data.embedding_matrix[1], 1.0)
+    assert np.allclose(cache._data.embedding_matrix[1], 1.0 / np.sqrt(5))
     
     # Verify save was called
     assert len(saved) == 1

@@ -528,8 +528,7 @@ class MindCache:
                         "type": label,
                         "content": r.content,
                         "topic": r.topic.name if r.topic else "General",
-                        "timestamp": r.timestamp.isoformat() if r.timestamp else None,
-                        "provenance": r.provenance,
+                        "timestamp": r.timestamp.isoformat() if r.timestamp else None
                     }
                     if MemClass == DecisionMemory:
                         mem_data["status"] = r.status
@@ -584,11 +583,11 @@ class MindCache:
         session = self.Session()
         try:
             session.query(ProcessingJob).filter(ProcessingJob.user_id == user_id).delete()
-            session.query(MemoryRegistry).filter(MemoryRegistry.user_id == user_id).delete()
             session.query(UserMemory).filter(UserMemory.user_id == user_id).delete()
             session.query(KnowledgeMemory).filter(KnowledgeMemory.user_id == user_id).delete()
             session.query(EpisodicMemory).filter(EpisodicMemory.user_id == user_id).delete()
             session.query(DecisionMemory).filter(DecisionMemory.user_id == user_id).delete()
+            session.query(MemoryRegistry).filter(MemoryRegistry.user_id == user_id).delete()
             session.query(Topic).filter(Topic.user_id == user_id).delete()
             session.commit()
             
