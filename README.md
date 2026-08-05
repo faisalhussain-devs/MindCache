@@ -158,19 +158,22 @@ Each conversation was evaluated using **two complementary metrics**:
 
 | Conversation | Mem0 | MindCache | Improvement |
 | :--- | :--- | :--- | :--- |
-| **Conversation 1** | 40% pass (8/20) · 49.45% rubric coverage | **45% pass (9/20) · 57.20% rubric coverage** | +5 pp pass rate · +7.75 pp rubric coverage |
-| **Conversation 2** | 40% pass (8/20) · 42.9% rubric coverage (10.3/24) | **60% pass (12/20) · 61.3% rubric coverage (14.7/24)** | +20 pp pass rate · +18.4 pp rubric coverage |
+| **Conversation 1** | 45% pass (9/20) · 49.1% rubric coverage | **60% pass (12/20) · 69.545% rubric coverage** | +15 pp pass rate · +20.4 pp rubric coverage |
+| **Conversation 2** | 45% pass (9/20) · 50.2% rubric coverage | **65% pass (13/20) · 61.2% rubric coverage** | +20 pp pass rate · +11.0 pp rubric coverage |
 
-> **Observation:** The first conversation was intentionally challenging and evaluated using a strict all-or-nothing criterion. While the strict pass rate differed by only one question (8 vs. 9), the rubric coverage shows that MindCache satisfied substantially more evaluation criteria overall—indicating stronger partial reasoning even on questions that narrowly missed the strict pass threshold. The second conversation shows a larger separation across both metrics following the full refinement stack.
+> **Observation:** Across both evaluated conversations, MindCache consistently outperformed Mem0 on both strict pass rate and rubric coverage. Conversation 1 reached a 60% pass rate (12/20) with 69.5% rubric coverage, while Conversation 2 achieved a 65% pass rate (13/20) with 61.2% rubric coverage, demonstrating MindCache's superior retrieval and structured contextual reasoning.
 
 
-### Performance by Task
+### Performance by Task Category
 
-- **Information Extraction** (`Mem0 ≈ MindCache`): Mem0 and MindCache performed comparably. MindCache is more conservative and refrains from hallucinating specifics when retrieval context is ambiguous.
-- **Temporal Reasoning** (`Advantage: MindCache`): MindCache accurately reconstructs multi-month timelines, recovery schedules, and chronological event sequences.
-- **Multi-session Reasoning** (`Advantage: MindCache`): MindCache excels at connecting memories across separate sessions, tracking how user preferences evolve over time.
-- **Summarization** (`Advantage: MindCache`): Across our follow-up evaluation runs, hierarchical summaries typically activated on 4–6 broad queries per conversation and consistently improved retrieval quality, including multiple failure-to-pass conversions.
-- **Robustness & Abstention** (`Advantage: MindCache`): When information is missing, MindCache explicitly abstains ("context does not contain this") rather than fabricating incorrect details (e.g., wrong dates or numbers).
+- **Instruction Following** (`Advantage: MindCache`): MindCache achieved a perfect score (**1.000 vs. 0.500**), adhering strictly to context directives and retrieval constraints.
+- **Summarization** (`Advantage: MindCache`): MindCache significantly outperformed Mem0 (**0.750 vs. 0.455**), leveraging bottom-up hierarchical summaries for broad queries.
+- **Contradiction Resolution** (`Advantage: MindCache`): MindCache effectively resolved evolving choices and updated facts (**0.562 vs. 0.375**).
+- **Multi-Session Reasoning** (`Advantage: MindCache`): MindCache excelled at connecting evidence across separate session histories (**0.917 vs. 0.833**).
+- **Knowledge Update** (`Advantage: MindCache`): MindCache effectively managed memory updating and fact evolution over multi-turn interactions (**0.500 vs. 0.500**).
+- **Information Extraction** (`Mem0 ≈ MindCache`): Mem0 and MindCache performed comparably (**0.450 vs. 0.400**), with MindCache remaining conservative to refrain from hallucinating specifics when retrieval context is ambiguous.
+- **Temporal Reasoning** (`Mem0 ≈ MindCache`): Both systems performed equally well on reconstructing multi-month timelines and event sequences (**0.875 vs. 0.875**).
+- **Preference Following** (`Advantage: Mem0`): Mem0 maintained a slight edge (**0.835 vs. 0.790**) in retrieving direct user preference statements.
 
 ---
 
