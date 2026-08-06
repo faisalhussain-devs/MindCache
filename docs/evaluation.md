@@ -55,9 +55,9 @@ Each conversation was evaluated using **two complementary metrics**:
 | **Contradiction Resolution** | 🥇 **MindCache** | **0.56 vs 0.38** | Effectively resolves evolving choices and updated facts. |
 | **Multi-Session Reasoning** | 🥇 **MindCache** | **0.92 vs 0.83** | Excels at connecting evidence across separate session histories. |
 | **Knowledge Update** | 🤝 **Tie** | **0.50 vs 0.50** | Both systems effectively manage fact evolution over multi-turn interactions. |
-| **Information Extraction** | 🤝 **Tie** | **0.40 vs 0.45** | MindCache remains conservative to refrain from hallucinating specifics when context is ambiguous. |
+| **Information Extraction** | 🥇 **Mem0** | **0.40 vs 0.45** | MindCache remains conservative to refrain from hallucinating specifics when context is ambiguous. |
 | **Temporal Reasoning** | 🤝 **Tie** | **0.875 vs 0.875** | Both systems accurately reconstruct multi-month timelines and event sequences. |
-| **Preference Following** | 🥈 **Mem0** | **0.79 vs 0.84** | Mem0 maintained a slight edge in retrieving direct raw user preference statements. |
+| **Preference Following** | 🥇 **Mem0** | **0.79 vs 0.84** | Mem0 maintained a slight edge in retrieving direct raw user preference statements. |
 
 ---
 
