@@ -5,7 +5,7 @@ MindCache is structured around a 3-phase architecture that separates **offline t
 ```
 ┌────────────────────────────────────────────────────────┐
 │ Phase 1: Offline Ingestion Pipeline                    │
-│ Conversation Turns ──> Grounded Routing ──> Extractor   │
+│ Conversation Turns ──> Grounded Routing ──> Extractor  │
 └───────────────────────────┬────────────────────────────┘
                             │
                             ▼
@@ -16,7 +16,7 @@ MindCache is structured around a 3-phase architecture that separates **offline t
                             │
                             ▼
 ┌────────────────────────────────────────────────────────┐
-│ Phase 3: Online Multi-Stage Hybrid Retrieval Engine     │
+│ Phase 3: Online Multi-Stage Hybrid Retrieval Engine    │
 │ Vector + BM25 ──> RRF ──> Decision Anchors ──> Context │
 └───────────────────────────┬────────────────────────────┘
 ```
