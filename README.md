@@ -81,6 +81,9 @@ Memory Extraction
       │
       ▼
 Four Memory Types (User / Decision / Episodic / Knowledge)
+      |
+      ▼
+Decision State Tracking
       │
       ▼
 Living Hierarchical Topic Tree
