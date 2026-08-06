@@ -8,16 +8,16 @@ Traditional memory systems treat all extracted statements as generic unstructure
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ 👤 USER MEMORY                                         │
+│ 👤 USER MEMORY                                         
 │ Explicit user preferences, roles, constraints, habits  │
 ├────────────────────────────────────────────────────────┤
-│ ⚖️ DECISION MEMORY                                      │
+│ ⚖️ DECISION MEMORY                                      
 │ Architectural/technical choices, status, rationale     │
 ├────────────────────────────────────────────────────────┤
-│ 📖 EPISODIC MEMORY                                     │
+│ 📖 EPISODIC MEMORY                                     
 │ Specific historical interactions, events, sessions     │
 ├────────────────────────────────────────────────────────┤
-│ 💡 KNOWLEDGE MEMORY                                    │
+│ 💡 KNOWLEDGE MEMORY                                    
 │ Extracted domain facts, technical documentation, rules │
 └────────────────────────────────────────────────────────┘
 ```
