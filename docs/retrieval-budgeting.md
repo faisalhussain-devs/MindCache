@@ -14,9 +14,9 @@ When assembling context for an LLM prompt, MindCache partitions the total target
 | :--- | :---: | :--- |
 | **User Memory** | 15% - 20% | Guarantees user persona, coding preferences, and constraints are always visible. |
 | **Active Decisions** | 20% - 25% | Ensures current architectural and project choices anchor the prompt. |
-| **Knowledge & Summaries**| 25% - 30% | Supplies technical documentation, codebase facts, or top-level topic overviews. |
+| **Knowledge Memories**| 25% - 30% | Supplies technical documentation, codebase facts, or top-level topic overviews. |
 | **Episodic Memories** | 30% - 35% | Provides specific historical turn evidence relevant to the query. |
-
+| **Summaries** | OPTIONAL | Provides High level details and gives a summary about the entire topic. |
 ---
 
 ## 💡 Benefits
