@@ -2,7 +2,7 @@
 
 **An open-source long-term memory engine for LLM agents.**
 
-Instead of storing conversations as a flat collection of embedding vectors, MindCache organizes them into a living knowledge hierarchy with specialized memory types, evolving decision tracking, and incremental summaries. It is built for assistants that need to reason across weeks or months of conversations rather than retrieve isolated facts.
+Instead of storing conversations as a flat collection of embedding vectors, MindCache organizes them into a living knowledge hierarchy with specialized memory types and evolving decision tracking. It is built for assistants that need to reason across long-term interaction histories.
 
 [![BEAM-1M](https://img.shields.io/badge/Benchmark-BEAM--1M%20Passed-success)](https://arxiv.org/abs/2404.17299)
 [![BEAM-10M](https://img.shields.io/badge/Benchmark-BEAM--10M%20Passed-success)](https://arxiv.org/abs/2404.17299)
@@ -64,7 +64,14 @@ print(context)
 
 Most long-term memory systems treat past interactions as a flat pool of unstructured embedding vectors. Over weeks of interaction, flat retrieval suffers from **context inflation**, **temporal collapse** (treating old choices as equal to current decisions), and **broad-query failure** (unable to answer high-level questions like *"What projects have I worked on this month?"*).
 
-MindCache shifts from **flat search** to a **living hierarchical memory tree**:
+### ⚔️ Why Not a Vector Database?
+
+| Feature | Traditional Vector Stores | MindCache |
+| :--- | :--- | :--- |
+| **Memory Structure** | Flat independent embedding vectors | Living topic hierarchy tree |
+| **Decision Lifecycle** | Treats old choices as equal to current decisions | Tracks decision state evolution (`Active` vs `Superseded`) |
+| **Broad Queries** | Fails or returns random snippets | Maintains RAPTOR-style incremental summaries |
+| **Search Engine** | Pure dense similarity | Hybrid Vector + BM25 + Decision-Anchor expansion |
 
 - **Problem**: Flat vector stores return disconnected snippets without temporal or structural context.
 - **Insight**: Long-term memory requires distinct memory types, explicit decision lifecycle tracking, and hierarchical summaries.
@@ -81,7 +88,7 @@ Memory Extraction
       │
       ▼
 Four Memory Types (User / Decision / Episodic / Knowledge)
-      |
+      │
       ▼
 Decision State Tracking
       │
@@ -103,14 +110,13 @@ Final Assembled Context → LLM Prompt
 
 ### 🌿 Automatically Organized Topic Hierarchy
 
-As conversations are ingested, MindCache continuously organizes extracted memories into a hierarchical topic tree. Rather than storing memories as a flat collection of embeddings, related concepts are grouped into increasingly specific topics. Leaf nodes contain memory clusters (e.g. `[memories: 47]`), while internal nodes provide semantic organization for retrieval and summarization.
+MindCache incrementally organizes memories into a living topic hierarchy. Leaf nodes store memory clusters while internal nodes organize concepts and power hierarchical retrieval and summarization.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/cc34f593-46c4-4369-b8ba-e2a16fca3f77" width="700" alt="Automatically Organized Topic Hierarchy" />
 </p>
 
-
-> *This hierarchy is maintained incrementally as new conversations arrive and serves as the structural backbone for both hierarchical summarization and hybrid retrieval.*
+👉 **[Read complete Topic Hierarchy documentation](docs/topic-tree.md)**
 
 ---
 
@@ -127,109 +133,54 @@ As conversations are ingested, MindCache continuously organizes extracted memori
 
 ## 📊 Evaluation
 
-MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchmark designed to evaluate retrieval across multi-session conversation histories at 1M and 10M token context windows (300 manually graded questions across 15 conversations).
+MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchmark assessing retrieval performance across multi-session conversation histories at 1M and 10M token context windows (300 manually graded questions across 15 conversations).
 
-### Benchmark Overview
+- 📏 **300 Benchmark Questions** across 15 multi-session conversations
+- ⏱️ **1.08s Average Retrieval Latency** for production queries
+- 🏆 **Best overall performance** on BEAM QA benchmark
 
-| Metric | Result |
-| :--- | ---: |
-| Benchmark | BEAM QA |
-| Questions | 300 |
-| Conversations | 15 |
-| Context Windows | 1M / 10M |
-| Avg. Retrieval Latency | **1.08 s** |
-| Overall Performance | **Best among evaluated systems** |
-
-### System Comparison
-
-| System | BEAM Benchmark Summary | Representative Follow-up Evaluation | Memory & Retrieval Architecture |
-| :--- | :--- | :--- | :--- |
-| **MindCache** | 🥇 **Best overall performance*** | Outperformed Mem0 across all manually analyzed conversations | Living topic hierarchy, decision tracking & incremental summaries |
-| **Mem0** | 🥈 **Competitive baseline** | Lower rubric scores and fewer passing answers across runs | Flat Memory Store |
-
-*\* Based on our evaluation of the BEAM benchmark (300 questions across 15 conversations). Full methodology and category breakdowns are described in the accompanying [design article](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian).*
-
-### Representative Follow-up Evaluation
-
-To better understand the impact of the final architectural refinements, we manually evaluated representative BEAM conversations after completing the final retrieval architecture (hierarchical summaries, decision-anchor retrieval, retrieval budgeting, and hierarchical path indexing).
-
-Each conversation was evaluated using **two complementary metrics**:
-
-- **Strict Pass Rate** — A question was counted as a pass only if **all required rubric items were satisfied**. A strong answer missing a single required item was counted as a failure.
-- **Rubric Coverage** — The percentage of all rubric items satisfied across the evaluation. This captures partial correctness even when a question does not meet the strict pass threshold.
-
-| Conversation | Mem0 | MindCache | Improvement |
-| :--- | :--- | :--- | :--- |
-| **Conversation 1** | 45% pass (9/20) · 49.1% rubric coverage | **60% pass (12/20) · 69.545% rubric coverage** | +15 pp pass rate · +20.4 pp rubric coverage |
-| **Conversation 2** | 45% pass (9/20) · 50.2% rubric coverage | **65% pass (13/20) · 61.2% rubric coverage** | +20 pp pass rate · +11.0 pp rubric coverage |
-
-> **Observation:** Across both evaluated conversations, MindCache consistently outperformed Mem0 on both strict pass rate and rubric coverage. Conversation 1 reached a 60% pass rate (12/20) with 69.5% rubric coverage, while Conversation 2 achieved a 65% pass rate (13/20) with 61.2% rubric coverage, demonstrating MindCache's superior retrieval and structured contextual reasoning.
-
-
-### Performance by Task Category
-
-- **Instruction Following** (`Advantage: MindCache`): MindCache achieved a perfect score (**1.0 vs. 0.5**), adhering strictly to context directives and retrieval constraints.
-- **Summarization** (`Advantage: MindCache`): MindCache significantly outperformed Mem0 (**0.75 vs. 0.46**), leveraging bottom-up hierarchical summaries for broad queries.
-- **Contradiction Resolution** (`Advantage: MindCache`): MindCache effectively resolved evolving choices and updated facts (**0.56 vs. 0.38**).
-- **Multi-Session Reasoning** (`Advantage: MindCache`): MindCache excelled at connecting evidence across separate session histories (**0.92 vs. 0.83**).
-- **Knowledge Update** (`Mem0 ≈ MindCache`): MindCache and Mem0 both effectively managed memory updating and fact evolution over multi-turn interactions (**0.50 vs. 0.50**).
-- **Information Extraction** (`Mem0 ≈ MindCache`): Mem0 and MindCache performed comparably (**0.45 vs. 0.40**), with MindCache remaining conservative to refrain from hallucinating specifics when retrieval context is ambiguous.
-- **Temporal Reasoning** (`Mem0 ≈ MindCache`): Both systems performed equally well on reconstructing multi-month timelines and event sequences (**0.875 vs. 0.875**).
-- **Preference Following** (`Advantage: Mem0`): Mem0 maintained a slight edge (**0.84 vs. 0.79**) in retrieving direct user preference statements.
+👉 **[View Full Evaluation & Benchmark Results](docs/evaluation.md)**
 
 ---
 
-### Strengths & Remaining Failure Modes
+## ⚙️ Architecture Overview
 
-#### Key Strengths
-- **Multi-session synthesis**: Seamlessly bridges facts across months of conversation history.
-- **Chronological tracking**: Accurately tracks sequence of events and evolving preferences.
-- **Broad topic coverage**: Hierarchical summaries answer high-level overview questions effectively.
+The MindCache pipeline operates in three distinct phases:
 
-#### ⚠️ Remaining Failure Modes
-- **Fine-grained evidence loss**: Compressing long subtrees into high-level summaries can occasionally drop specific minor details required by exact-match test rubrics.
-- **Ambiguity resolution**: Cautious retrieval logic sometimes opts for uncertainty/abstention when multiple candidate memories overlap, costing points on strict exact-match benchmarks.
+### Phase 1 — Offline Ingestion Pipeline
+Processes incoming conversation turns, filters noise, routes to existing topic paths, and extracts structured memories.
 
----
+### Phase 2 — Background Dynamic Tree Lifecycle
+Handles background leaf node splitting, sibling merging, Leiden graph partitioning, and incremental delta summaries.
 
-## 🧠 Design Insights
+### Phase 3 — Online Multi-Stage Hybrid Retrieval Engine
+Executes vector + BM25 hybrid search, RRF rank fusion, query classification, and decision-anchor expansion in **1.08s average latency**.
 
-During the development and evaluation of MindCache, we experimented with multiple memory organization and retrieval strategies. **Five architectural decisions consistently emerged as valuable during development and were retained in the final system. One of these (hierarchical summaries) was quantitatively evaluated, while the remaining decisions are supported by repeated manual inspection and iterative testing.**
-
-### 1. Specialized Memory Types
-Separating memories into four semantic categories—**User**, **Decision**, **Episodic**, and **Knowledge**—became a core design decision after iterative experimentation, enabling specialized update lifecycles and more balanced retrieval.
-
-### 2. Retrieval Budgeting Per Memory Type
-Rather than filling the context window with the globally highest-scoring memories (which often results in a single memory category dominating), MindCache allocates explicit retrieval quotas across memory types. This guarantees evidence diversity in every prompt.
-
-### 3. Dynamic Hierarchical Tree & Incremental Summaries
-Incremental RAPTOR-style hierarchical summaries improved retrieval for broad multi-topic queries where semantic vector search alone often struggled. 
-> **Evaluation Finding**: Across our follow-up evaluation runs, hierarchical summaries typically activated on 4–6 broad queries per conversation and consistently improved retrieval quality, including multiple failure-to-pass conversions.
-
-### 4. Decision-Guided Retrieval (Decision Anchors)
-Top-ranked Decision memories act as semantic anchors. MindCache extracts key concepts from active decisions and performs BM25 lexical expansion to pull in supporting Episodic and Knowledge memories that standard vector search can miss—especially when the user prompt contains few discriminative keywords.
-
-### 5. Hierarchical Path Indexing
-Stored memories index their complete tree path (e.g., `Artificial Intelligence → Machine Learning → Deep Learning → PyTorch`). This provides additional lexical context that can improve BM25 recall for broader conceptual queries.
-
-### Architectural Findings Evidence
-
-| Finding | Evaluation Evidence | Evidence Level |
-| :--- | :--- | :--- |
-| **Hierarchical summaries** | Typically 4–6 activations per conversation; consistently improved retrieval quality | 📊 **Quantitatively Supported** |
-| **Decision anchors** | Manual retrieval analysis across development | 🔍 **Observed in Development** |
-| **Hierarchical path indexing** | Manual inspection of retrieved evidence across representative queries | 🔍 **Observed in Development** |
-| **Four memory types** | Architectural schema refinement | 🏗️ **Design Rationale** |
-| **Memory type quotas** | Iterative architectural refinement | 🏗️ **Design Rationale** |
+👉 **[View Complete Architecture Specification](docs/architecture.md)** &nbsp;|&nbsp; 🔄 **[Trace End-to-End Retrieval Flow](docs/how-retrieval-works.md)**
 
 ---
 
-## 🖼️ Visual Overview & Screenshots
+## 🧠 Core Architectural Ideas
+
+These design choices address common long-term memory failures such as context inflation, temporal collapse, and poor broad-query retrieval:
+
+- 🧩 **Specialized Memory Types**: Separate buckets for User, Decision, Episodic, and Knowledge facts. 👉 **[Read more](docs/memory-types.md)**
+- 📊 **Retrieval Budgeting**: Enforces explicit category quotas to prevent context inflation. 👉 **[Read more](docs/retrieval-budgeting.md)**
+- 🌲 **Incremental Summaries**: Bottom-up RAPTOR-style rollups for broad overview queries. 👉 **[Read more](docs/summaries.md)**
+- ⚖️ **Decision Anchors**: Uses active decisions to anchor BM25 lexical expansion queries. 👉 **[Read more](docs/decision-anchor-retrieval.md)**
+- 🗂️ **Hierarchical Path Indexing**: Prepends complete tree paths to boost sparse lexical recall. 👉 **[Read more](docs/path-indexing.md)**
+
+👉 **[View Core Architectural Ideas Guide](docs/design-decisions.md)**
+
+---
+
+## 🖼️ Visual Overview
 
 Below are illustrations of how MindCache structures, updates, and retrieves memories across sessions.
 
 ### 1. Decision State Tracking
-Tracks decision evolution, marking superseded choices to prevent outdated preferences from leaking.
+Tracks decision evolution, marking superseded choices to prevent outdated preferences from leaking. 👉 **[Read more](docs/decision-anchor-retrieval.md)**
+
 ```
 Decision: Use PyTorch for deep learning
 Status:   ACTIVE
@@ -241,12 +192,12 @@ History:
        ↓
   PyTorch Selection (2024-03-01) -> ACTIVE
 ```
-> *Decisions evolve over time rather than persisting as conflicting memories.*
 
 ---
 
 ### 2. Context Assembled for LLM
-Final prompt context generated by MindCache, featuring memory type partitioning and decision anchors.
+Structured context assembled for the LLM prompt, featuring memory type partitioning and decision anchors. 👉 **[Read more](docs/retrieval-budgeting.md)**
+
 ```
 [USER MEMORY]
 • Prefers Python, FastAPI, and Postgres for backend development.
@@ -260,12 +211,12 @@ Final prompt context generated by MindCache, featuring memory type partitioning 
 [HIERARCHICAL SUMMARY]
 • Machine Learning Journey: Transitioned from TF to PyTorch, built MindCache core.
 ```
-> *Structured context assembled for the LLM prompt.*
 
 ---
 
 ### 3. Incremental Summary Lifecycle
-Rolls up node summaries from leaf memories bottom-up to support broad overview queries.
+Rolls up node summaries from leaf memories bottom-up to support broad overview queries. 👉 **[Read more](docs/summaries.md)**
+
 ```
 Leaf Memories Added (Session 1..N)
              ↓
@@ -275,119 +226,33 @@ Parent Node Summary Updated (Incremental Rollup)
              ↓
 Available for High-Level Summarization Queries
 ```
-> *Hierarchical summaries support broad, multi-session overview queries.*
 
 ---
 
-## 📦 Core Features
+## 📁 Project Structure
 
-### 🗂️ Memory Organization
-- **Living Hierarchical Topic Tree**: Dynamically builds topic nodes to organize memories logically.
-- **Dynamic Graph Restructuring**: Performs Leiden graph partitioning, leaf node splitting, and sibling merging as memory grows.
-- **Incremental Delta Summaries**: Generates bottom-up summaries processing only new leaf entries (deltas) to save LLM tokens.
+The project is organized into independent ingestion, storage, and retrieval modules.
 
-### 👤 Memory Modeling
-- **Four Specialized Memory Types**: Segmented into *User*, *Decision*, *Episodic*, and *Knowledge* buckets.
-- **Decision State Machine**: Automatically detects and manages decision states (`Active`, `Superseded`, `Conditional`, `Rejected`).
-- **Grounded Routing**: Queries existing top paths as constraints before extraction to eliminate duplicate topic nodes.
-
-### 🔎 Multi-Stage Retrieval Engine
-- **Hybrid Vector + BM25 + RRF**: Parallel dense vector search and sparse lexical search merged via Reciprocal Rank Fusion.
-- **Decision-Anchor Expansion**: High-scoring decisions act as expansion anchors to retrieve related episodic and knowledge context.
-- **BM25 Morphological Aliasing**: Uses a Union-Find data structure with lemmatization to unify word inflections (`database` / `databases`) in-memory.
-- **Adaptive Query Classification**: Dynamically routes between broad overview queries (pulling summaries) and specific factual queries.
-
----
-
-## ⚙️ Architecture Overview
-
-The MindCache pipeline operates in three distinct phases:
-
-### Phase 1 — Offline Ingestion Pipeline
-```mermaid
-flowchart LR
-    classDef dark      fill:#313244,color:#cdd6f4,stroke:#585b70
-    classDef llm       fill:#cba6f7,color:#11111b,stroke:#11111b
-    classDef tree      fill:#89dceb,color:#11111b,stroke:#11111b
-    classDef yellow    fill:#f9e2af,color:#11111b,stroke:#11111b
-    classDef green     fill:#a6e3a1,color:#11111b,stroke:#11111b
-
-    subgraph Ingest ["1. Ingestion & Grounded Routing"]
-        A["💬 Turn"]:::dark --> B{"Worth Keeping?"}:::llm
-        B -- Yes --> C["🌲 Grounded Routing"]:::tree
-        C --> D["🤖 Extract & Save"]:::llm
-    end
-
-    subgraph Reorg ["2. Batch Reorganization & Summaries"]
-        D --> E["🔍 Decision Analyzer"]:::yellow
-        E --> F{"Reorg Threshold?"}:::yellow
-        F -- Yes --> G["✂️ Reorganize Tree"]:::yellow
-        G --> H["📜 Delta Summaries"]:::llm
-    end
-
-    H --> OUT["Refresh & Persist"]:::green
-    F -- No --> OUT
 ```
-> *Phase 1 — Offline ingestion pipeline: queueing, grounded routing, extraction, decision analysis, and reorganization trigger.*
-
----
-
-### Phase 2 — Background Dynamic Tree Lifecycle
-```mermaid
-flowchart LR
-    classDef tree     fill:#cba6f7,color:#11111b,stroke:#11111b
-    classDef reorg    fill:#f9e2af,color:#11111b,stroke:#11111b
-    classDef summary  fill:#a6e3a1,color:#11111b,stroke:#11111b
-    classDef trigger  fill:#313244,color:#cdd6f4,stroke:#585b70
-
-    T["🌲 Dynamic Topic Tree\n(Hierarchical ontology)"]:::tree
-
-    R1["✂️ Split overloaded leaf nodes"]:::reorg
-    R2["🔗 Merge sparse sibling nodes"]:::reorg
-    R3["⬆️ Promote / Demote paths"]:::reorg
-    R4["🌐 Leiden Graph Partitioning"]:::reorg
-
-    S["📜 Incremental Delta Summaries\n(Bottom-up delta rollups)"]:::summary
-
-    TH["⏱️ Threshold Trigger\n(TriadBlock Count)"]:::trigger
-
-    TH --> T
-    T --> R1 & R2 & R3 & R4
-    R1 & R2 & R3 & R4 --> T
-    T -- "New leaf memories" --> S
-    S -- "Summary stored at parent" --> T
+mindcache/
+├── client.py                # Main SDK interface & MindCache client
+├── Database/                # Storage, tree reorg, embeddings & summaries
+│   ├── db_manager.py        # Database operations (SQLite & pgvector)
+│   ├── db_setup.py          # Table schema initialization
+│   ├── decision_analyzer.py # Decision state tracking logic
+│   ├── embedder.py          # Embedding generation & vector indexing
+│   ├── nodes_summary.py     # Bottom-up RAPTOR delta summarization
+│   └── reorganize_tree.py   # Tree splitting, merging & Leiden partitioning
+├── Memory_extract/          # Ingestion & extraction pipeline
+│   ├── input_denoiser.py    # Conversation noise filtering
+│   ├── memory_extractor.py  # Structured fact & memory extraction
+│   ├── safe_ai.py           # Provider LLM client wrapper (Gemini/OpenAI/Anthropic)
+│   └── schema.py            # Pydantic schemas for memory types
+└── retrieval/               # Online hybrid retrieval engine
+    ├── active_path.py       # Topic tree traversal & decision-anchor expansion
+    ├── hybrid_search.py     # Hybrid vector + BM25 + RRF ranking
+    └── root_cache.py        # Query classification & context assembly
 ```
-> *Phase 2 — Background dynamic tree lifecycle: graph partitioning, node splits/merges, and incremental delta summarization.*
-
----
-
-### Phase 3 — Online Multi-Stage Hybrid Retrieval Engine
-```mermaid
-flowchart LR
-    classDef dark      fill:#313244,color:#cdd6f4,stroke:#585b70
-    classDef llm       fill:#cba6f7,color:#11111b,stroke:#11111b
-    classDef search    fill:#89b4fa,color:#11111b,stroke:#11111b
-    classDef anchor    fill:#f38ba8,color:#11111b,stroke:#11111b
-    classDef green     fill:#a6e3a1,color:#11111b,stroke:#11111b
-
-    subgraph PhaseA ["1. Hybrid RRF Search"]
-        Q["🔎 User Query"]:::dark --> S["Vector + BM25"]:::search
-        S --> RRF["Reciprocal Rank Fusion"]:::search
-    end
-
-    subgraph PhaseB ["2. Memory Pools & Anchors"]
-        RRF --> CL["🏷️ Query Classifier"]:::llm
-        CL --> P["Memory Pools & Summaries"]:::search
-        P --> DA["⚖️ Decision Anchors"]:::anchor
-        DA --> EX["BM25 Anchor Expansion"]:::anchor
-    end
-
-    subgraph PhaseC ["3. Prompt Assembly"]
-        EX --> INJ["📋 Inject Directives"]:::anchor
-        INJ --> OUT["📤 Final Context → LLM"]:::green
-    end
-```
-> *Phase 3 — Online multi-stage hybrid retrieval engine: RRF scoring, memory pool partitioning, decision-anchor expansion, and prompt assembly.*
 
 ---
 
