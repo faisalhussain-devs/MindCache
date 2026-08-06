@@ -25,8 +25,8 @@ When new conversation turns are processed, MindCache queries existing top-level 
 
 As memories accumulate, static hierarchies become rigid or unbalanced. MindCache applies background dynamic graph operations to maintain topic hygiene:
 
-### Node Splitting (`TriadBlock`)
-When a leaf node's memory count exceeds a designated threshold (e.g., `TriadBlock` capacity), MindCache automatically splits the overloaded node into smaller, focused child nodes using embedding clustering.
+### Node Splitting
+When a leaf node's memory count exceeds a designated threshold, MindCache automatically splits the overloaded node into smaller, focused child nodes using embedding clustering.
 
 ### Sibling Node Merging
 If multiple sibling nodes under the same parent become sparse or semantic drift causes overlap, MindCache merges them back into a consolidated topic node.
