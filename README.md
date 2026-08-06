@@ -119,7 +119,6 @@ As conversations are ingested, MindCache continuously organizes extracted memori
 - 🌲 **Living Hierarchical Topic Tree**: Organizes raw turns into dynamic knowledge trees rather than flat vector pools.
 - 🧩 **Four Specialized Memory Types**: Dedicated handling for User, Decision, Episodic, and Knowledge memories.
 - 🎯 **Decision State Tracking**: Tracks evolving choices so past decisions don't overwrite current preferences.
-- 🔍 **Hybrid RRF Retrieval**: Merges dense semantic vector search with sparse BM25 lexical matching via Reciprocal Rank Fusion.
 - 📚 **Incremental Hierarchical Summaries**: Bottom-up RAPTOR-style summaries for broad-topic and multi-session reasoning.
 - ⚡ **1.08s Average Retrieval Latency**: Production-ready, low-latency execution.
 - 📊 **Evaluated on BEAM QA**: Tested across 300 questions on 1M and 10M token context windows.
@@ -169,14 +168,14 @@ Each conversation was evaluated using **two complementary metrics**:
 
 ### Performance by Task Category
 
-- **Instruction Following** (`Advantage: MindCache`): MindCache achieved a perfect score (**1.000 vs. 0.500**), adhering strictly to context directives and retrieval constraints.
-- **Summarization** (`Advantage: MindCache`): MindCache significantly outperformed Mem0 (**0.750 vs. 0.455**), leveraging bottom-up hierarchical summaries for broad queries.
-- **Contradiction Resolution** (`Advantage: MindCache`): MindCache effectively resolved evolving choices and updated facts (**0.562 vs. 0.375**).
-- **Multi-Session Reasoning** (`Advantage: MindCache`): MindCache excelled at connecting evidence across separate session histories (**0.917 vs. 0.833**).
-- **Knowledge Update** (`Advantage: MindCache`): MindCache effectively managed memory updating and fact evolution over multi-turn interactions (**0.500 vs. 0.500**).
-- **Information Extraction** (`Mem0 ≈ MindCache`): Mem0 and MindCache performed comparably (**0.450 vs. 0.400**), with MindCache remaining conservative to refrain from hallucinating specifics when retrieval context is ambiguous.
+- **Instruction Following** (`Advantage: MindCache`): MindCache achieved a perfect score (**1.0 vs. 0.5**), adhering strictly to context directives and retrieval constraints.
+- **Summarization** (`Advantage: MindCache`): MindCache significantly outperformed Mem0 (**0.75 vs. 0.46**), leveraging bottom-up hierarchical summaries for broad queries.
+- **Contradiction Resolution** (`Advantage: MindCache`): MindCache effectively resolved evolving choices and updated facts (**0.56 vs. 0.38**).
+- **Multi-Session Reasoning** (`Advantage: MindCache`): MindCache excelled at connecting evidence across separate session histories (**0.92 vs. 0.83**).
+- **Knowledge Update** (`Mem0 ≈ MindCache`): MindCache and Mem0 both effectively managed memory updating and fact evolution over multi-turn interactions (**0.50 vs. 0.50**).
+- **Information Extraction** (`Mem0 ≈ MindCache`): Mem0 and MindCache performed comparably (**0.45 vs. 0.40**), with MindCache remaining conservative to refrain from hallucinating specifics when retrieval context is ambiguous.
 - **Temporal Reasoning** (`Mem0 ≈ MindCache`): Both systems performed equally well on reconstructing multi-month timelines and event sequences (**0.875 vs. 0.875**).
-- **Preference Following** (`Advantage: Mem0`): Mem0 maintained a slight edge (**0.835 vs. 0.790**) in retrieving direct user preference statements.
+- **Preference Following** (`Advantage: Mem0`): Mem0 maintained a slight edge (**0.84 vs. 0.79**) in retrieving direct user preference statements.
 
 ---
 
@@ -187,10 +186,9 @@ Each conversation was evaluated using **two complementary metrics**:
 - **Chronological tracking**: Accurately tracks sequence of events and evolving preferences.
 - **Broad topic coverage**: Hierarchical summaries answer high-level overview questions effectively.
 
-#### Remaining Failure Modes
-- **Summary compression**: Incremental summaries occasionally omit fine-grained named entities or specific numeric values.
-- **Ambiguity resolution**: Cautious retrieval logic sometimes opts for uncertainty/abstention when multiple candidate memories overlap, costing points on strict exact-match benchmarks.
+#### ⚠️ Remaining Failure Modes
 - **Fine-grained evidence loss**: Compressing long subtrees into high-level summaries can occasionally drop specific minor details required by exact-match test rubrics.
+- **Ambiguity resolution**: Cautious retrieval logic sometimes opts for uncertainty/abstention when multiple candidate memories overlap, costing points on strict exact-match benchmarks.
 
 ---
 
@@ -393,13 +391,6 @@ flowchart LR
 
 ---
 
-## ⚠️ Current Limitations
-
-- **Summary Compression**: Bottom-up node summaries can occasionally compress away fine-grained named entities or specific numeric values.
-- **Ambiguity Resolution**: When multiple candidate memories closely match a query, retrieval logic errs on the side of caution/abstention rather than making a guess.
-
----
-
 ## ⚙️ Configuration & Database Setup
 
 MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for production workloads.
@@ -429,7 +420,6 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 - [x] **Incremental Delta Summaries**: Bottom-up rollup summaries.
 - [ ] **Utility-Aware Memories**: Access-pattern importance scoring.
 - [ ] **Automatic Memory Aging**: Time-decay scoring for episodic memories.
-- [ ] **Multi-Agent Shared Memory**: Capability-based shared memory partitions.
 
 ---
 
