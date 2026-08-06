@@ -249,9 +249,9 @@ mindcache/
 │   ├── safe_ai.py           # Provider LLM client wrapper (Gemini/OpenAI/Anthropic)
 │   └── schema.py            # Pydantic schemas for memory types
 └── retrieval/               # Online hybrid retrieval engine
-    ├── active_path.py       # Topic tree traversal & decision-anchor expansion
+    ├── active_path.py       # Does retrieval & Query classification & context assembly 
     ├── hybrid_search.py     # Hybrid vector + BM25 + RRF ranking
-    └── root_cache.py        # Query classification & context assembly
+    └── root_cache.py        # Caches the nodes, memories and bm25 indexing
 ```
 
 ---
