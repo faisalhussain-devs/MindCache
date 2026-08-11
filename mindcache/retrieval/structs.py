@@ -20,3 +20,7 @@ class RetrievalResult:
     system_hint: str = ""
     # The detected query type label for logging / eval
     query_type: str = ""
+
+    def __str__(self) -> str:
+        return self.context
+

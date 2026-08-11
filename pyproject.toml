@@ -24,6 +24,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = [
+    "mcp>=1.0.0"
+]
 rerank = [
     "fastembed[rerank]>=0.2.0"
 ]
@@ -49,10 +52,14 @@ dev = [
     "scikit-learn>=1.0.0",
     "igraph>=0.9.0",
     "leidenalg>=0.8.0",
-    "pgvector>=0.2.0"
+    "pgvector>=0.2.0",
+    "mcp>=1.0.0"
 ]
 
+[project.scripts]
+mindcache-mcp = "mindcache.mcp.server:main"
+
 [tool.setuptools]
-packages = ["mindcache", "mindcache.Database", "mindcache.Memory_extract", "mindcache.retrieval"]
+packages = ["mindcache", "mindcache.Database", "mindcache.Memory_extract", "mindcache.retrieval", "mindcache.utils", "mindcache.mcp"]
 package-dir = { "" = "." }
 

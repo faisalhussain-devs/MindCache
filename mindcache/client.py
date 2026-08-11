@@ -5,6 +5,7 @@ from mindcache.Database.db_setup import init_db, ProcessingJob, MemoryRegistry, 
 from mindcache.exceptions import IngestionError, RetrievalError
 from mindcache.Database.db_manager import DatabaseManager
 from mindcache.retrieval.active_path import ActivePathRetrieval
+from mindcache.retrieval.structs import RetrievalResult
 from mindcache.Memory_extract.memory_extractor import Memory_Extractor
 import logging
 logger = logging.getLogger(__name__)
@@ -334,10 +335,10 @@ class MindCache:
                 
         return {"success": success, "failed": failed, "tree": get_tree_cache(user_id=user_id)}
 
-    def search(self, query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = False) -> str:
+    def search(self, query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = False) -> RetrievalResult:
         """
         Search for memories matching a query.
-        Returns the formatted context string ready to inject into the LLM system prompt.
+        Returns RetrievalResult dataclass containing 'context', 'system_hint', 'query_type', and 'trace'.
 
         Args:
             query:        The query string to search for.
