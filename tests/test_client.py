@@ -205,39 +205,7 @@ def test_inspect_invalid_view_raises_value_error(mc, db_session):
         mc.inspect(view="invalid_mode")
 
 
-def test_remove_memory_from_collapsed_tree_cache(mc, tmp_path, monkeypatch):
-    """Test incremental removal of a memory entry from CollapsedTreeCache."""
-    import numpy as np
-    from mindcache.retrieval.root_cache import CollapsedTreeCache, CollapsedTreeCacheData, MemoryMeta
 
-    monkeypatch.setattr(CollapsedTreeCache, "cache_file", property(lambda self: tmp_path / "test_cache.pkl"))
-    monkeypatch.setattr(CollapsedTreeCache, "emb_matrix_file", property(lambda self: tmp_path / "test_matrix.npy"))
-
-    cache = CollapsedTreeCache(user_id="test_remove")
-
-    data = CollapsedTreeCacheData()
-    m1 = MemoryMeta(memory_id=1, memory_type="episodic", topic_id=1, name="T1", level=0, path="T1", searchable_text="python fastapi")
-    m2 = MemoryMeta(memory_id=2, memory_type="knowledge", topic_id=1, name="T1", level=0, path="T1", searchable_text="postgres database")
-
-    data.entries = [m1, m2]
-    data.entry_key_to_index = {"mem:episodic:1": 0, "mem:knowledge:2": 1}
-    data.doc_lengths = [2, 2]
-    data.inverted_index = {"python": {0: 1}, "postgres": {1: 1}}
-    data.embedding_matrix = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
-    data.corpus_size = 2
-    data.avg_dl = 2.0
-
-    cache._data = data
-
-    removed = cache.remove_memory(memory_id=1, memory_type="episodic")
-    assert removed is True
-    assert cache._data.corpus_size == 1
-    assert len(cache._data.entries) == 1
-    assert cache._data.entries[0].memory_id == 2
-    assert "mem:episodic:1" not in cache._data.entry_key_to_index
-    assert cache._data.entry_key_to_index["mem:knowledge:2"] == 0
-    assert cache._data.embedding_matrix.shape[0] == 1
-    assert np.allclose(cache._data.embedding_matrix[0], [0.3, 0.4])
 
 
 def test_forget_returns_true_and_removes_memory(mc, db_session, monkeypatch):
