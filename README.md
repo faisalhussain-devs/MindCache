@@ -2,8 +2,6 @@
 
 **An open-source long-term memory engine for LLM agents.**
 
-Instead of storing conversations as a flat collection of embedding vectors, MindCache organizes them into a living knowledge hierarchy with specialized memory types and evolving decision tracking. It is built for assistants that need to reason across long-term interaction histories.
-
 [![BEAM-1M](https://img.shields.io/badge/Benchmark-BEAM--1M%20Passed-success)](https://arxiv.org/abs/2404.17299)
 [![BEAM-10M](https://img.shields.io/badge/Benchmark-BEAM--10M%20Passed-success)](https://arxiv.org/abs/2404.17299)
 [![PyPI version](https://img.shields.io/badge/pypi-v0.1.0-blue)](https://pypi.org/project/mindcache/)
@@ -13,7 +11,160 @@ Instead of storing conversations as a flat collection of embedding vectors, Mind
 
 ---
 
+**Agents forget.**
+
+**More history doesn't mean better memory.**
+
+As conversations grow, important information gets buried. An AI needs to know what to remember, what has changed, which decisions still matter, and what is relevant now.
+
+Most systems treat this as a search problem.
+
+**MindCache treats it as a memory problem.**
+
+It turns conversations into organized, persistent memory and continuously updates that memory as the conversation evolves.
+
+---
+
 👉 **[Read the Design Article](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian)** &nbsp;|&nbsp; 🎥 **[Watch Demo Video](https://www.youtube.com/watch?v=wcTQkyN1CoM)** &nbsp;|&nbsp; ⚡ **[Quick Start](#-quick-start-30-seconds)**
+
+---
+
+## 🧠 How MindCache Builds Memory
+
+MindCache doesn't treat every message as equally important, and it doesn't leave memories as a flat collection.
+
+It turns conversations into four kinds of memory:
+
+* **Preferences** — what a person likes, dislikes, or prefers.
+* **Decisions** — choices that can change over time.
+* **Experiences** — things that happened in previous conversations.
+* **Knowledge** — useful information learned along the way.
+
+These memories are then placed into a **living topic tree** that organizes related information together. As new conversations arrive, MindCache can reorganize that structure, split growing topics, merge related ones, and build summaries of broader areas.
+
+The result is not just a collection of stored memories. **It is an evolving map of what the agent has learned over time.**
+
+```
+Conversations
+     │
+     ▼
+┌───────────────────────────┐
+│        MindCache          │
+│                           │
+│  Preferences              │
+│  Decisions                │
+│  Experiences              │
+│  Knowledge                │
+│                           │
+│       ┌─ Work             │
+│       ├─ Projects         │
+│       │   ├─ MindCache    │
+│       │   └─ ML Project   │
+│       ├─ Preferences      │
+│       └─ Personal         │
+└───────────────────────────┘
+```
+
+---
+
+## 🎯 Memory changes. MindCache keeps up.
+
+People change their minds. Projects change direction. Old decisions become irrelevant.
+
+For example:
+
+> “We use TensorFlow for model training.”
+
+Later:
+
+> “We switched to PyTorch.”
+
+A simple store can keep both statements without explicitly representing which decision replaced the other.
+
+MindCache tracks the state of decisions over time:
+
+```text
+Old decision
+TensorFlow
+    ↓
+SUPERSEDED
+
+New decision
+PyTorch
+    ↓
+ACTIVE
+```
+
+MindCache keeps the old decision in the history, but knows that it is no longer the current choice. This lets MindCache distinguish **what used to be true from what is true now**, instead of treating every past statement as equally relevant.
+
+---
+
+## 📚 Memory needs context, not just facts.
+
+Remembering individual things is useful. But over time, an agent also needs to understand how those things fit together.
+
+For example:
+
+```text
+Machine Learning
+├── PyTorch
+├── NLP
+├── Computer Vision
+└── Handwriting Project
+```
+
+MindCache builds summaries at different levels of this topic structure.
+
+So instead of storing only:
+
+> “Built a handwriting model.”
+
+it can maintain a broader understanding of:
+
+> “The user has been working on machine learning, with a focus on PyTorch, NLP, and handwriting synthesis.”
+
+As new memories arrive, these summaries are updated with the new information instead of rebuilding everything from scratch.
+
+**This gives the agent both the details and the bigger picture.**
+
+---
+
+## 💡 How It Works Together: An End-to-End Example
+
+Consider how an agent's memory evolves across weeks of interaction:
+
+```text
+User conversations over time
+
+  Week 1: "I'm starting a new project and using TensorFlow for model training."
+    │
+  Week 4: "I'm running a few experiments with PyTorch."
+    │
+  Week 8: "I've switched completely to PyTorch for all model training."
+
+                     │
+                     ▼
+                 MindCache
+                     │
+    ┌────────────────┴────────────────┐
+    │                                 │
+    ▼                                 ▼
+Decision Lifecycle              Living Topic Tree & Summary
+TensorFlow → SUPERSEDED         Machine Learning
+PyTorch    → ACTIVE             └── Frameworks
+                                    └── PyTorch
+
+                                Summary: "User's ML stack has transitioned
+                                from TensorFlow to PyTorch."
+                     │
+                     ▼
+User query (Week 10): "What ML framework am I using?"
+                     │
+                     ▼
+Retrieved Context: PyTorch (ACTIVE)
+```
+
+By maintaining decision states, topic hierarchy, and incremental summaries, MindCache supplies the LLM with the current decision (**PyTorch**) while keeping the superseded choice (**TensorFlow**) in history.
 
 ---
 
@@ -60,74 +211,55 @@ print(context)
 
 ---
 
-## 💡 Why MindCache?
+## ⚡ What Makes MindCache Different?
 
-Most long-term memory systems treat past interactions as a flat pool of unstructured embedding vectors. Over weeks of interaction, flat retrieval suffers from **context inflation**, **temporal collapse** (treating old choices as equal to current decisions), and **broad-query failure** (unable to answer high-level questions like *"What projects have I worked on this month?"*).
-
-### ⚔️ Why Not a Vector Database?
-
-| Feature | Traditional Vector Stores | MindCache |
+| Problem | Simple Memory Approach | MindCache |
 | :--- | :--- | :--- |
-| **Memory Structure** | Flat independent embedding vectors | Living topic hierarchy tree |
-| **Decision Lifecycle** | Treats old choices as equal to current decisions | Tracks decision state evolution (`Active` vs `Superseded`) |
-| **Broad Queries** | Fails or returns random snippets | Maintains RAPTOR-style incremental summaries |
-| **Search Engine** | Pure dense similarity | Hybrid Vector + BM25 + Decision-Anchor expansion |
+| **Different kinds of information** | Treats memories similarly | Separates preferences, decisions, experiences, and knowledge |
+| **Changing decisions** | Keeps old and new information together | Tracks which decision replaced another |
+| **Growing information** | Leaves memories in a flat collection | Builds a living topic structure |
+| **Big-picture questions** | Relies on individual memories | Maintains incremental summaries across the topic hierarchy |
 
-- **Problem**: Flat vector stores return disconnected snippets without temporal or structural context.
-- **Insight**: Long-term memory requires distinct memory types, explicit decision lifecycle tracking, and hierarchical summaries.
-- **Design**: MindCache continuously organizes incoming information into a dynamic topic tree, tracks evolving decisions, and rolls up delta summaries.
-- **Evidence**: Evaluated on 300 benchmark questions across 1M and 10M token context windows, MindCache achieved the best overall performance among the memory systems evaluated in our BEAM experiments.
+*Under the hood, MindCache combines this memory structure with hybrid search, decision-guided retrieval, and controlled context allocation.*
 
-### System Pipeline
+### Memory Pipeline
 
 ```
-Conversation Turns
+Conversations
       │
       ▼
-Memory Extraction
+Important Information Extracted
       │
       ▼
-Four Memory Types (User / Decision / Episodic / Knowledge)
+Four Kinds of Memory (Preferences / Decisions / Experiences / Knowledge)
       │
       ▼
-Decision State Tracking
+Living Topic Structure
       │
       ▼
-Living Hierarchical Topic Tree
+Changing Decisions Tracked
       │
       ▼
-Incremental Delta Summaries
+Broader Summaries
       │
       ▼
-Hybrid RRF Search (Vector + BM25)
+Relevant Context Assembled
       │
       ▼
-Decision-Anchor BM25 Expansion
-      │
-      ▼
-Final Assembled Context → LLM Prompt
+LLM Prompt
 ```
-
-### 🌿 Automatically Organized Topic Hierarchy
-
-MindCache incrementally organizes memories into a living topic hierarchy. Leaf nodes store memory clusters while internal nodes organize concepts and power hierarchical retrieval and summarization.
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/cc34f593-46c4-4369-b8ba-e2a16fca3f77" width="700" alt="Automatically Organized Topic Hierarchy" />
-</p>
-
-👉 **[Read complete Topic Hierarchy documentation](docs/topic-tree.md)**
 
 ---
 
-## ✨ Highlights
+## ⚙️ Architecture & Technical Retrieval
 
-- 🌲 **Living Hierarchical Topic Tree**: Organizes raw turns into dynamic knowledge trees rather than flat vector pools.
-- 🧩 **Four Specialized Memory Types**: Dedicated handling for User, Decision, Episodic, and Knowledge memories.
-- 🎯 **Decision State Tracking**: Tracks evolving choices so past decisions don't overwrite current preferences.
-- 📚 **Incremental Hierarchical Summaries**: Bottom-up RAPTOR-style summaries for broad-topic and multi-session reasoning.
-- ⚡ **1.08s Average Retrieval Latency**: Production-ready, low-latency execution.
-- 📊 **Evaluated on BEAM QA**: Tested across 300 questions on 1M and 10M token context windows.
+The MindCache pipeline operates in three distinct phases:
+
+- **Phase 1 — Ingestion & Grounded Routing**: Filters noise, maps memories to existing topic paths, and extracts structured facts.
+- **Phase 2 — Background Dynamic Tree Lifecycle**: Handles leaf node splitting, sibling merging, Leiden graph partitioning, and incremental delta summaries.
+- **Phase 3 — Online Multi-Stage Hybrid Retrieval Engine**: Executes vector + BM25 hybrid search, RRF rank fusion, query classification, and decision-anchor expansion in **1.08s average latency**.
+
+👉 **[View Complete Architecture Specification](docs/architecture.md)** &nbsp;|&nbsp; 🔄 **[Trace End-to-End Retrieval Flow](docs/how-retrieval-works.md)** &nbsp;|&nbsp; 🧠 **[Core Architectural Ideas](docs/design-decisions.md)**
 
 ---
 
@@ -140,92 +272,6 @@ MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchm
 - 🏆 **Best overall performance** on BEAM QA benchmark
 
 👉 **[View Full Evaluation & Benchmark Results](docs/evaluation.md)**
-
----
-
-## ⚙️ Architecture Overview
-
-The MindCache pipeline operates in three distinct phases:
-
-### Phase 1 — Offline Ingestion Pipeline
-Processes incoming conversation turns, filters noise, routes to existing topic paths, and extracts structured memories.
-
-### Phase 2 — Background Dynamic Tree Lifecycle
-Handles background leaf node splitting, sibling merging, Leiden graph partitioning, and incremental delta summaries.
-
-### Phase 3 — Online Multi-Stage Hybrid Retrieval Engine
-Executes vector + BM25 hybrid search, RRF rank fusion, query classification, and decision-anchor expansion in **1.08s average latency**.
-
-👉 **[View Complete Architecture Specification](docs/architecture.md)** &nbsp;|&nbsp; 🔄 **[Trace End-to-End Retrieval Flow](docs/how-retrieval-works.md)**
-
----
-
-## 🧠 Core Architectural Ideas
-
-These design choices address common long-term memory failures such as context inflation, temporal collapse, and poor broad-query retrieval:
-
-- 🧩 **Specialized Memory Types**: Separate buckets for User, Decision, Episodic, and Knowledge facts. 👉 **[Read more](docs/memory-types.md)**
-- 📊 **Retrieval Budgeting**: Enforces explicit category quotas to prevent context inflation. 👉 **[Read more](docs/retrieval-budgeting.md)**
-- 🌲 **Incremental Summaries**: Bottom-up RAPTOR-style rollups for broad overview queries. 👉 **[Read more](docs/summaries.md)**
-- ⚖️ **Decision Anchors**: Uses active decisions to anchor BM25 lexical expansion queries. 👉 **[Read more](docs/decision-anchor-retrieval.md)**
-- 🗂️ **Hierarchical Path Indexing**: Prepends complete tree paths to boost sparse lexical recall. 👉 **[Read more](docs/path-indexing.md)**
-
-👉 **[View Core Architectural Ideas Guide](docs/design-decisions.md)**
-
----
-
-## 🖼️ Visual Overview
-
-Below are illustrations of how MindCache structures, updates, and retrieves memories across sessions.
-
-### 1. Decision State Tracking
-Tracks decision evolution, marking superseded choices to prevent outdated preferences from leaking. 👉 **[Read more](docs/decision-anchor-retrieval.md)**
-
-```
-Decision: Use PyTorch for deep learning
-Status:   ACTIVE
-
-History:
-  TensorFlow (2024-01-10) -> REJECTED
-       ↓
-  PyTorch Experiment (2024-02-15) -> CONDITIONAL
-       ↓
-  PyTorch Selection (2024-03-01) -> ACTIVE
-```
-
----
-
-### 2. Context Assembled for LLM
-Structured context assembled for the LLM prompt, featuring memory type partitioning and decision anchors. 👉 **[Read more](docs/retrieval-budgeting.md)**
-
-```
-[USER MEMORY]
-• Prefers Python, FastAPI, and Postgres for backend development.
-
-[DECISION MEMORY (ACTIVE)]
-• Switched from TensorFlow to PyTorch for model training.
-
-[KNOWLEDGE MEMORY]
-• Completed CS50 AI course; familiar with transformer architectures.
-
-[HIERARCHICAL SUMMARY]
-• Machine Learning Journey: Transitioned from TF to PyTorch, built MindCache core.
-```
-
----
-
-### 3. Incremental Summary Lifecycle
-Rolls up node summaries from leaf memories bottom-up to support broad overview queries. 👉 **[Read more](docs/summaries.md)**
-
-```
-Leaf Memories Added (Session 1..N)
-             ↓
-    Delta Processing (Only new items)
-             ↓
-Parent Node Summary Updated (Incremental Rollup)
-             ↓
-Available for High-Level Summarization Queries
-```
 
 ---
 
