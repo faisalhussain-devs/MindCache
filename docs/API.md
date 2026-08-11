@@ -28,29 +28,40 @@ mc = MindCache(
 
 ---
 
-## SDK Methods
+## Core SDK Methods (6 Verbs)
 
 ### `add(messages: list[dict], user_id: str = "default") -> int`
-Buffers conversation turns into the ingestion queue.
+Buffers conversation turns into the SQLite ingestion queue in milliseconds.
 - **`messages`**: List of conversation turn dicts `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`.
-- **`user_id`**: User/session identifier.
+- **`user_id`**: Scope for user/session identifier.
 - **Returns**: Ingestion Job ID (`int`).
 
-### `process_queue(user_id: str = "default", limit: int = None) -> dict`
-Drains the pending queue, extracts structured memories, updates decision states, and triggers tree reorganization/summaries.
-- **Returns**: Execution summary dictionary.
+### `process(user_id: str = "default") -> dict`
+Executes memory extraction on queued jobs, updates decision states, and refreshes the topic tree and summaries.
+- **`user_id`**: User scope to process.
+- **Returns**: Dictionary summary `{"success": int, "failed": int, "tree": dict}`.
+- *(Backwards-compatible alias: `process_queue()`)*
 
-### `search(query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = False) -> str`
-Retrieves formatted structured context to inject into an LLM prompt.
-- **`query`**: User question or prompt text.
-- **`top_k_corpus`**: Number of memory candidates to retrieve.
-- **`use_reranker`**: Set to `True` to enable Jina v2 Cross-Encoder reranking. Default is `False` for 1.08s average retrieval latency in our evaluation setup.
+### `search(query: str, user_id: str = "default") -> str`
+Retrieves formatted structured context ready to inject into an LLM prompt.
+- **`query`**: User question or search query.
+- **`user_id`**: User scope.
+- **Returns**: Formatted markdown context string containing user preferences, active decisions, episodic events, and knowledge.
 
-### `get_all(user_id: str = "default", memory_type: str = None) -> list[dict]`
-Retrieves stored memories for a user, optionally filtered by `memory_type` (`"user"`, `"knowledge"`, `"episodic"`, `"decision"`).
+### `inspect(user_id: str = "default", view: str = "memories", memory_type: str = None) -> list[dict] | dict`
+Observability interface to inspect stored memory state.
+- **`view`**: Inspection mode:
+  - `"memories"` (default): Returns list of stored memory records.
+  - `"tree"`: Clears old cache, builds fresh topic tree, and returns it.
+  - `"all"`: Clears old cache, builds fresh topic tree, and returns `{"tree": tree, "memories": memories}`.
+- **`memory_type`**: Optional filter when viewing memories (`"user"`, `"knowledge"`, `"episodic"`, `"decision"`).
 
-### `delete(memory_id: int, user_id: str = "default") -> bool`
-Deletes a specific memory entry by ID.
+### `forget(memory_id: int, user_id: str = "default") -> bool`
+Removes a specific memory entry by ID for a user.
+- **`memory_id`**: Registry ID of the memory to remove.
+- **Returns**: `True` if deleted, `False` if not found.
+- *(Backwards-compatible alias: `delete()`)*
 
 ### `reset(user_id: str = "default") -> None`
-Clears all stored data for a user.
+Clears all stored memories, topic nodes, and queued jobs for a user.
+

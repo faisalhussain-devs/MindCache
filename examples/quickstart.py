@@ -50,21 +50,19 @@ def main():
     # 3. Process the queue (runs extraction + decision analyzer + cache pre-warm)
     print("\nProcessing queue (running LLM extraction)...")
     try:
-        results = mc.process_queue(user_id="alice")
+        results = mc.process(user_id="alice")
         print(f"Queue processed. Results: {results}\n")
     except Exception as e:
         print(f"Ingestion failed (did you set GEMINI_API_KEY?): {e}")
         return
 
-    # 4. Automatically print topic tree from Database/view_topics.py
+    # 4. Inspect remembered state
     print("=" * 70)
-    print("AUTOMATIC TOPIC TREE DISPLAY (view_topics.py)")
+    print("INSPECTING REMEMBERED STATE (mc.inspect)")
     print("=" * 70)
-    session = mc.Session()
-    try:
-        print_topic_tree(session=session)
-    finally:
-        session.close()
+    memories = mc.inspect(user_id="alice", view="memories")
+    for mem in memories:
+        print(f"[{mem['type'].upper()}] (Topic: {mem['topic']}): {mem['content']}")
 
     # 5. Search retrieved context and output with beautiful visual formatting
     query = "What is Alice's preferred database?"

@@ -8,27 +8,40 @@ from mindcache.retrieval.active_path import ActivePathRetrieval
 from mindcache.Memory_extract.memory_extractor import Memory_Extractor
 import logging
 logger = logging.getLogger(__name__)
-REORG_THRESHOLD = 60
+_REORG_THRESHOLD = 60
+_PROCESS_LIMIT = 30
+_MAX_RETRIES = 5
+_CONSOLIDATION_TARGET = 4000
+_CONSOLIDATION_HARD_LIMIT = 7000
 
 class MindCache:
     """
     MindCache — Structured Long-Term Memory SDK for LLM Agents.
     Provides persistent, hierarchical memory with zero-copy vector search.
     
-    Usage:
+    Core Verbs API:
         mc = MindCache(db_path="mindcache.db", provider="gemini", model_name="gemini-2.5-flash")
         
-        # Ingestion (non-blocking, writes to queue in milliseconds)
+        # 1. Queue conversation turns (fast SQLite write in ms)
         mc.add([
             {"role": "user", "content": "I prefer working with Python and FastAPI."},
             {"role": "assistant", "content": "Got it! We will focus on Python and FastAPI."}
         ], user_id="alice")
         
-        # Process the queue in background
-        mc.process_queue(user_id="alice")
+        # 2. Process queued conversations (LLM extraction & memory tree maintenance)
+        mc.process(user_id="alice")
         
-        # Retrieve context
+        # 3. Retrieve relevant context formatted for LLM system prompt
         context = mc.search("What are my preferred tools?", user_id="alice")
+
+        # 4. Inspect remembered state ('memories', 'tree', or 'all')
+        state = mc.inspect(user_id="alice", view="memories")
+
+        # 5. Remove a specific memory
+        mc.forget(memory_id=12, user_id="alice")
+
+        # 6. Clear all memory state for a user
+        mc.reset(user_id="alice")
     """
     def __init__(
         self,
@@ -101,178 +114,24 @@ class MindCache:
         finally:
             session.close()
 
-    def _consolidate_jobs(self, user_id: str = "default", max_tokens: int = 4000, hard_limit_tokens: int = 7000) -> int:
-        """
-        DB-level pre-step: merge small pending jobs for `user_id` into larger
-        ProcessingJob rows, then delete the originals atomically in one commit.
-
-        Token count: len(text) // 4  (4 characters = 1 token).
-
-        Uses max_tokens as a soft target (finishes the batch AFTER exceeding it),
-        and hard_limit_tokens as a strict ceiling (never exceeds this, breaks BEFORE).
-        
-        Returns the number of original jobs consumed (deleted) by merging.
-        """
-        soft_max_chars = max_tokens * 4  # 1 token = 4 characters
-        hard_max_chars = hard_limit_tokens * 4
-        final_jobs = 0
-        session = self.Session()
-        try:
-            pending = (
-                session.query(ProcessingJob)
-                .filter(
-                    ProcessingJob.status == "pending",
-                    ProcessingJob.user_id == user_id,
-                )
-                .order_by(ProcessingJob.id)
-                .all()
-            )
-            if not pending:
-                return 0
-
-            # Greedy grouping by character budget
-            batches: list = []
-            current_parts: list = []
-            current_ids: list = []
-            current_chars: int = 0
-            current_timestamp = None
-
-            for job in pending:
-                block = job.raw_prompt
-                block_chars = len(block)
-
-                ts_changed = False
-                if current_timestamp is not None and job.timestamp is not None:
-                    if hasattr(current_timestamp, "date") and hasattr(job.timestamp, "date"):
-                        ts_changed = (current_timestamp.date() != job.timestamp.date())
-                    else:
-                        ts_changed = (current_timestamp != job.timestamp)
-
-                # 1. Break BEFORE adding if it violates the HARD limit (or timestamp changes)
-                if (current_chars + block_chars > hard_max_chars or ts_changed) and current_parts:
-                    batches.append({
-                        "parts":     list(current_parts),
-                        "ids":       list(current_ids),
-                        "timestamp": current_timestamp,
-                    })
-                    current_parts.clear()
-                    current_ids.clear()
-                    current_chars = 0
-                    current_timestamp = None
-
-                # 2. Add the block
-                current_parts.append(block)
-                current_ids.append(job.id)
-                current_chars += block_chars
-                current_timestamp = job.timestamp
-                
-                # 3. Break AFTER adding if we reached the SOFT target limit
-                if current_chars >= soft_max_chars:
-                    batches.append({
-                        "parts":     list(current_parts),
-                        "ids":       list(current_ids),
-                        "timestamp": current_timestamp,
-                    })
-                    current_parts.clear()
-                    current_ids.clear()
-                    current_chars = 0
-                    current_timestamp = None
-
-            if current_parts:
-                batches.append({
-                    "parts":     list(current_parts),
-                    "ids":       list(current_ids),
-                    "timestamp": current_timestamp,
-                })
-
-            merged_batches = []
-            for batch in batches:
-                if merged_batches:
-                    prev = merged_batches[-1]
-                    same_date = False
-                    if prev["timestamp"] is not None and batch["timestamp"] is not None:
-                        if hasattr(prev["timestamp"], "date") and hasattr(batch["timestamp"], "date"):
-                            same_date = (prev["timestamp"].date() == batch["timestamp"].date())
-                        else:
-                            same_date = (prev["timestamp"] == batch["timestamp"])
-                    
-                    prev_chars = sum(len(p) for p in prev["parts"])
-                    curr_chars = sum(len(p) for p in batch["parts"])
-                    
-                    if same_date and (prev_chars + curr_chars <= hard_max_chars):
-                        # Fold batch into prev!
-                        prev["parts"].extend(batch["parts"])
-                        prev["ids"].extend(batch["ids"])
-                        continue
-
-                merged_batches.append(batch)
-
-            batches = merged_batches
-            # Only merge batches that contain more than one original job
-            total_consumed = 0
-            for batch in batches:
-                if len(batch["ids"]) <= 1:
-                    continue  # Already a single job — leave untouched
-
-                merged_prompt = "\n\n".join(batch["parts"])
-
-                first_id = batch["ids"][0]
-                rest_ids = batch["ids"][1:]
-                
-                session.query(ProcessingJob).filter(
-                    ProcessingJob.id == first_id
-                ).update({
-                    "raw_prompt": merged_prompt,
-                    "timestamp": batch["timestamp"],
-                }, synchronize_session=False)
-
-                # Delete the remaining jobs that were merged into the first one
-                session.query(ProcessingJob).filter(
-                    ProcessingJob.id.in_(rest_ids)
-                ).delete(synchronize_session=False)
-                
-                session.flush()
-
-                final_jobs += 1
-                total_consumed += len(batch["ids"])
-
-            if total_consumed:
-                session.commit()
-                logger.info(
-                    f"[MindCache] Consolidated {total_consumed} small jobs for user '{user_id}' into {final_jobs} larger jobs "
-                    f"(target: ~{max_tokens} tokens, max: {hard_limit_tokens} tokens)"
-                )
-
-            return total_consumed
-
-        except Exception as e:
-            session.rollback()
-            logger.warning(f"[MindCache] Job consolidation failed (originals left intact): {e}")
-            return 0
-        finally:
-            session.close()
-
-
-    def process_queue(
-        self,
-        user_id: str = "default",
-        limit: int = 30,
-        max_retries: int = 5,
-        consolidation_max_tokens: int = 4000,
-        consolidation_hard_limit_tokens: int = 7000,
-    ) -> dict:
+    def process(self, user_id: str = "default", limit: int = _PROCESS_LIMIT, max_retries: int = _MAX_RETRIES,
+        consolidation_max_tokens: int = _CONSOLIDATION_TARGET, consolidation_hard_limit_tokens: int = _CONSOLIDATION_HARD_LIMIT) -> dict:
         """
         Run the memory extraction pipeline on queued jobs for a specific user.
 
         Flow:
-          1. Consolidate ALL small pending jobs into larger DB rows (pre-step, no limit).
+          1. Consolidate ALL small pending jobs into larger DB rows (pre-step).
           2. Fetch up to `limit` jobs from the now-consolidated queue.
-          3. Embed + extract + save each job (original per-job logic, unchanged).
+          3. Embed + extract + save each job and update topic tree summaries.
         """
-        # --- Step 1: DB-level consolidation (runs before limit fetch) ---
-        self._consolidate_jobs(user_id=user_id, max_tokens=consolidation_max_tokens, hard_limit_tokens=consolidation_hard_limit_tokens)
+        # Step 1: DB-level consolidation (runs before limit fetch)
+        self.db_manager.consolidate_processing_jobs(
+            user_id=user_id,
+            max_tokens=consolidation_max_tokens,
+            hard_limit_tokens=consolidation_hard_limit_tokens,
+        )
 
-        # --- Step 2: Fetch jobs (after consolidation) ---
+        # Step 2: Fetch jobs (after consolidation)
         try:
             session = self.Session()
             try:
@@ -318,7 +177,7 @@ class MindCache:
         finally:
             _snap_sess.close()
 
-        # --- Step 3: Process each job (original per-job logic, unchanged) ---
+        # Step 3: Process each job (original per-job logic, unchanged)
         success = 0
         failed = 0
         for job_data in jobs_data:
@@ -363,7 +222,6 @@ class MindCache:
                     sess.close()
                 failed += 1
 
-
         # Run decision analyzer to update decision statuses
         if success > 0:
             logger.info(f"[MindCache] Running decision state analyzer for user '{user_id}'...")
@@ -379,11 +237,11 @@ class MindCache:
             finally:
                 sess.close()
 
-            crossed_threshold = (triads_before // REORG_THRESHOLD) < (triads_after // REORG_THRESHOLD)
+            crossed_threshold = (triads_before // _REORG_THRESHOLD) < (triads_after // _REORG_THRESHOLD)
 
             if crossed_threshold:
                 logger.info(
-                    f"[MindCache] TriadBlock count crossed a {REORG_THRESHOLD}-job boundary "
+                    f"[MindCache] TriadBlock count crossed a {_REORG_THRESHOLD}-job boundary "
                     f"({triads_before} → {triads_after}). Triggering tree reorganisation..."
                 )
                 from mindcache.Database.reorganize_tree import reorganize_tree
@@ -485,9 +343,7 @@ class MindCache:
             query:        The query string to search for.
             user_id:      The user ID to scope the search to.
             top_k_corpus: Number of candidates to consider per memory type before reranking.
-            use_reranker: If True (default), applies the Jina v2 cross-encoder reranker
-                          (Phase 3 + Phase 6).  Set to False to skip reranking and fall
-                          back to pure RRF score ordering — faster but less precise.
+            use_reranker: If True, applies cross-encoder reranking. Defaults to False for RRF score ordering.
         """
         try:
             result = self.retriever.retrieve(
@@ -501,12 +357,29 @@ class MindCache:
         except Exception as e:
             raise RetrievalError(f"Search failed: {e}") from e
 
+    def inspect(self, user_id: str = "default", view: str = "memories", memory_type: str = None) -> list[dict] | dict:
+        """
+        Developer-facing observability interface to inspect stored memory state.
 
-    def get_all(self, user_id: str = "default", memory_type: str = None) -> list[dict]:
+        Args:
+            user_id:      The user ID to inspect.
+            view:         Type of inspection view:
+                          - 'memories' (default): Returns list of stored memory records.
+                          - 'tree': Clears old cache, builds fresh topic tree, and returns it.
+                          - 'all': Clears old cache, builds fresh tree, and returns dict with 'tree' and 'memories'.
+            memory_type:  Optional filter when viewing memories ('user', 'knowledge', 'episodic', 'decision').
         """
-        Fetch all stored memories from the database.
-        Optionally filter by memory_type: 'user', 'knowledge', 'episodic', or 'decision'.
-        """
+        if view not in ("memories", "tree", "all"):
+            raise ValueError(f"Invalid view '{view}'. Allowed options: 'memories', 'tree', 'all'.")
+
+        fresh_tree = None
+        if view in ("tree", "all"):
+            from mindcache.retrieval.root_cache import refresh_tree_cache, get_tree_cache
+            refresh_tree_cache(user_id=user_id)
+            fresh_tree = get_tree_cache(user_id=user_id)
+            if view == "tree":
+                return fresh_tree
+
         session = self.Session()
         memories = []
         try:
@@ -516,9 +389,14 @@ class MindCache:
                 "episodic": EpisodicMemory,
                 "decision": DecisionMemory
             }
-            
-            classes_to_query = [type_map[memory_type]] if memory_type else type_map.values()
-            
+
+            if memory_type is not None and memory_type not in type_map:
+                raise ValueError(
+                    f"Invalid memory_type '{memory_type}'. "
+                    f"Allowed options: {sorted(type_map)}"
+                )
+            classes_to_query = [type_map[memory_type]] if memory_type and memory_type in type_map else list(type_map.values())
+
             for MemClass in classes_to_query:
                 label = [k for k, v in type_map.items() if v == MemClass][0]
                 rows = session.query(MemClass).filter(MemClass.user_id == user_id).all()
@@ -534,13 +412,19 @@ class MindCache:
                         mem_data["status"] = r.status
                         mem_data["context"] = r.context
                     memories.append(mem_data)
+
+            if view == "all":
+                return {
+                    "tree": fresh_tree,
+                    "memories": memories
+                }
             return memories
         finally:
             session.close()
 
-    def delete(self, memory_id: int, user_id: str = "default") -> bool:
+    def forget(self, memory_id: int, user_id: str = "default") -> bool:
         """
-        Delete a memory by its ID.
+        Remove a memory by its ID for a specific user.
         """
         session = self.Session()
         try:
@@ -550,7 +434,7 @@ class MindCache:
             ).first()
             if not reg:
                 return False
-            
+
             type_map = {
                 "user": UserMemory,
                 "knowledge": KnowledgeMemory,
@@ -563,22 +447,26 @@ class MindCache:
                     MemClass.id == memory_id,
                     MemClass.user_id == user_id
                 ).delete()
-            
+
             session.delete(reg)
             session.commit()
-            
-            from mindcache.retrieval.root_cache import refresh_tree_cache
-            refresh_tree_cache(user_id=user_id)
+
+            from mindcache.retrieval.root_cache import CollapsedTreeCache, get_tree_cache
+            cache = CollapsedTreeCache(user_id=user_id)
+            if cache.is_ready:
+                cache.clear()
+            get_tree_cache.cache_clear()
             return True
         except Exception as e:
             session.rollback()
-            raise IngestionError(f"Delete memory failed: {e}") from e
+            raise IngestionError(f"Forget memory failed: {e}") from e
         finally:
             session.close()
 
     def reset(self, user_id: str = "default") -> None:
         """
-        Reset the database for a specific user, clearing all memories and queue jobs.
+        Delete all MindCache data for a specific user.
+        Intentionally destructive operation for testing or user memory resets.
         """
         session = self.Session()
         try:
@@ -590,7 +478,7 @@ class MindCache:
             session.query(MemoryRegistry).filter(MemoryRegistry.user_id == user_id).delete()
             session.query(Topic).filter(Topic.user_id == user_id).delete()
             session.commit()
-            
+
             from mindcache.retrieval.root_cache import refresh_tree_cache
             refresh_tree_cache(user_id=user_id)
             logger.info(f"[MindCache] Database reset completed for user '{user_id}'.")

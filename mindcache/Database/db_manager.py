@@ -77,6 +77,163 @@ class DatabaseManager:
         init_db()
         self.Session = Session
 
+    def consolidate_processing_jobs(
+        self,
+        user_id: str = "default",
+        max_tokens: int = 4000,
+        hard_limit_tokens: int = 7000,
+    ) -> int:
+        """
+        DB-level pre-step: merge small pending jobs for `user_id` into larger
+        ProcessingJob rows, then delete the originals atomically in one commit.
+
+        Token count: len(text) // 4  (4 characters = 1 token).
+
+        Uses max_tokens as a soft target (finishes the batch AFTER exceeding it),
+        and hard_limit_tokens as a strict ceiling (never exceeds this, breaks BEFORE).
+        
+        Returns the number of original jobs consumed (deleted) by merging.
+        """
+        soft_max_chars = max_tokens * 4  # 1 token = 4 characters
+        hard_max_chars = hard_limit_tokens * 4
+        final_jobs = 0
+        session = self.Session()
+        try:
+            pending = (
+                session.query(ProcessingJob)
+                .filter(
+                    ProcessingJob.status == "pending",
+                    ProcessingJob.user_id == user_id,
+                )
+                .order_by(ProcessingJob.id)
+                .all()
+            )
+            if not pending:
+                return 0
+
+            # Greedy grouping by character budget
+            batches: list = []
+            current_parts: list = []
+            current_ids: list = []
+            current_chars: int = 0
+            current_timestamp = None
+
+            for job in pending:
+                block = job.raw_prompt
+                block_chars = len(block)
+
+                ts_changed = False
+                if current_timestamp is not None and job.timestamp is not None:
+                    if hasattr(current_timestamp, "date") and hasattr(job.timestamp, "date"):
+                        ts_changed = (current_timestamp.date() != job.timestamp.date())
+                    else:
+                        ts_changed = (current_timestamp != job.timestamp)
+
+                # 1. Break BEFORE adding if it violates the HARD limit (or timestamp changes)
+                if (current_chars + block_chars > hard_max_chars or ts_changed) and current_parts:
+                    batches.append({
+                        "parts":     list(current_parts),
+                        "ids":       list(current_ids),
+                        "timestamp": current_timestamp,
+                    })
+                    current_parts.clear()
+                    current_ids.clear()
+                    current_chars = 0
+                    current_timestamp = None
+
+                # 2. Add the block
+                current_parts.append(block)
+                current_ids.append(job.id)
+                current_chars += block_chars
+                current_timestamp = job.timestamp
+                
+                # 3. Break AFTER adding if we reached the SOFT target limit
+                if current_chars >= soft_max_chars:
+                    batches.append({
+                        "parts":     list(current_parts),
+                        "ids":       list(current_ids),
+                        "timestamp": current_timestamp,
+                    })
+                    current_parts.clear()
+                    current_ids.clear()
+                    current_chars = 0
+                    current_timestamp = None
+
+            if current_parts:
+                batches.append({
+                    "parts":     list(current_parts),
+                    "ids":       list(current_ids),
+                    "timestamp": current_timestamp,
+                })
+
+            merged_batches = []
+            for batch in batches:
+                if merged_batches:
+                    prev = merged_batches[-1]
+                    same_date = False
+                    if prev["timestamp"] is not None and batch["timestamp"] is not None:
+                        if hasattr(prev["timestamp"], "date") and hasattr(batch["timestamp"], "date"):
+                            same_date = (prev["timestamp"].date() == batch["timestamp"].date())
+                        else:
+                            same_date = (prev["timestamp"] == batch["timestamp"])
+                    
+                    prev_chars = sum(len(p) for p in prev["parts"])
+                    curr_chars = sum(len(p) for p in batch["parts"])
+                    
+                    if same_date and (prev_chars + curr_chars <= hard_max_chars):
+                        # Fold batch into prev!
+                        prev["parts"].extend(batch["parts"])
+                        prev["ids"].extend(batch["ids"])
+                        continue
+
+                merged_batches.append(batch)
+
+            batches = merged_batches
+            # Only merge batches that contain more than one original job
+            total_consumed = 0
+            for batch in batches:
+                if len(batch["ids"]) <= 1:
+                    continue  # Already a single job — leave untouched
+
+                merged_prompt = "\n\n".join(batch["parts"])
+
+                first_id = batch["ids"][0]
+                rest_ids = batch["ids"][1:]
+                
+                session.query(ProcessingJob).filter(
+                    ProcessingJob.id == first_id
+                ).update({
+                    "raw_prompt": merged_prompt,
+                    "timestamp": batch["timestamp"],
+                }, synchronize_session=False)
+
+                # Delete the remaining jobs that were merged into the first one
+                session.query(ProcessingJob).filter(
+                    ProcessingJob.id.in_(rest_ids)
+                ).delete(synchronize_session=False)
+                
+                session.flush()
+
+                final_jobs += 1
+                total_consumed += len(batch["ids"])
+
+            if total_consumed:
+                session.commit()
+                logger.info(
+                    f"[MindCache] Consolidated {total_consumed} small jobs for user '{user_id}' into {final_jobs} larger jobs "
+                    f"(target: ~{max_tokens} tokens, max: {hard_limit_tokens} tokens)"
+                )
+
+            return total_consumed
+
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"[MindCache] Job consolidation failed (originals left intact): {e}")
+            return 0
+        finally:
+            session.close()
+
+
     @staticmethod
     def _to_blob(vector):
         """Convert numpy array to bytes for storage"""

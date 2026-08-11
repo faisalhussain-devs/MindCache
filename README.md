@@ -203,7 +203,7 @@ job_id = mc.add([
 ], user_id="alice")
 
 # 2. Process pending queue (extracts memories, updates tree and indices)
-mc.process_queue(user_id="alice")
+mc.process(user_id="alice")
 
 # 3. Retrieve structured context for future prompts
 context = mc.search("What is Alice's preferred database?", user_id="alice")
@@ -324,10 +324,12 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 
 ## 📡 API Reference
 
-- **`add(messages, user_id)`**: Buffer conversation turns into the ingestion queue.
-- **`process_queue(user_id)`**: Drain queue, extract memories, and update tree summaries.
-- **`search(query, user_id)`**: Retrieve formatted context for LLM prompt injection.
-- **`get_all()`** / **`delete()`** / **`reset()`**: Manage stored user memories.
+- **`add(messages, user_id)`**: Buffer conversation turns into the ingestion queue in milliseconds.
+- **`process(user_id)`**: Extract memories, update decision state, and refresh dynamic topic summaries.
+- **`search(query, user_id)`**: Retrieve formatted context ready for LLM prompt injection.
+- **`inspect(user_id, view)`**: Inspect stored memory state (`memories`, `tree`, `all`).
+- **`forget(memory_id, user_id)`**: Remove a specific memory entry by ID.
+- **`reset(user_id)`**: Clear all stored memory data for a user.
 
 👉 **[View Complete API Reference](docs/API.md)**
 
