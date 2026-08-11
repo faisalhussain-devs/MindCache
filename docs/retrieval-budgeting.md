@@ -12,18 +12,19 @@ When assembling context for an LLM prompt, MindCache partitions the total target
 
 | Memory Category | Target Quota Allocation | Rationale |
 | :--- | :---: | :--- |
-| **User Memory** | 15% - 20% | Guarantees user persona, coding preferences, and constraints are always visible. |
-| **Active Decisions** | 20% - 25% | Ensures current architectural and project choices anchor the prompt. |
-| **Knowledge Memories**| 25% - 30% | Supplies technical documentation, codebase facts, or top-level topic overviews. |
+| **User Memory** | 15% - 20% | Reserves quota so user persona, coding preferences, and constraints remain visible. |
+| **Active Decisions** | 20% - 25% | Anchors the prompt with current architectural and project choices. |
+| **Knowledge & Summaries** | 25% - 30% | Supplies technical documentation, codebase facts, or top-level topic overviews. |
 | **Episodic Memories** | 30% - 35% | Provides specific historical turn evidence relevant to the query. |
 | **Summaries** | OPTIONAL | Provides High level details and gives a summary about the entire topic. |
+
 ---
 
 ## 💡 Benefits
 
-1. **Guaranteed Evidence Diversity**: Prevents any single memory type from swamping the prompt.
+1. **Promotes Evidence Diversity**: Prevents any single memory type from dominating the prompt.
 2. **Predictable Prompt Tokens**: Keeps context size balanced and stable across multi-turn conversations.
-3. **Structured Ingestion Directives**: Forces LLM generation to adhere strictly to retrieved constraints.
+3. **Structured Context Directives**: Formats retrieved memories to help the LLM adhere to active constraints.
 
 ---
 

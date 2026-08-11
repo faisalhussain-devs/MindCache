@@ -35,10 +35,10 @@ MindCache doesn't treat every message as equally important, and it doesn't leave
 
 It turns conversations into four kinds of memory:
 
-* **Preferences** — what a person likes, dislikes, or prefers.
-* **Decisions** — choices that can change over time.
-* **Experiences** — things that happened in previous conversations.
-* **Knowledge** — useful information learned along the way.
+* **User** — preferences, constraints, and habits.
+* **Decision** — choices and their current state over time.
+* **Episodic** — things that happened in previous conversations.
+* **Knowledge** — useful facts and information learned along the way.
 
 These memories are then placed into a **living topic tree** that organizes related information together. As new conversations arrive, MindCache can reorganize that structure, split growing topics, merge related ones, and build summaries of broader areas.
 
@@ -51,9 +51,9 @@ Conversations
 ┌───────────────────────────┐
 │        MindCache          │
 │                           │
-│  Preferences              │
-│  Decisions                │
-│  Experiences              │
+│  User                     │
+│  Decision                 │
+│  Episodic                 │
 │  Knowledge                │
 │                           │
 │       ┌─ Work             │
@@ -181,6 +181,7 @@ A 2-minute walkthrough covering installation, ingestion, automatic hierarchy gen
 
 ### 1. Install
 ```bash
+export GEMINI_API_KEY="your-gemini-api-key"
 pip install mindcache
 ```
 
@@ -215,7 +216,7 @@ print(context)
 
 | Problem | Simple Memory Approach | MindCache |
 | :--- | :--- | :--- |
-| **Different kinds of information** | Treats memories similarly | Separates preferences, decisions, experiences, and knowledge |
+| **Different kinds of information** | Treats memories similarly | Separates User, Decision, Episodic, and Knowledge memory |
 | **Changing decisions** | Keeps old and new information together | Tracks which decision replaced another |
 | **Growing information** | Leaves memories in a flat collection | Builds a living topic structure |
 | **Big-picture questions** | Relies on individual memories | Maintains incremental summaries across the topic hierarchy |
@@ -231,7 +232,7 @@ Conversations
 Important Information Extracted
       │
       ▼
-Four Kinds of Memory (Preferences / Decisions / Experiences / Knowledge)
+Four Kinds of Memory (User / Decision / Episodic / Knowledge)
       │
       ▼
 Living Topic Structure
@@ -255,23 +256,31 @@ LLM Prompt
 
 The MindCache pipeline operates in three distinct phases:
 
-- **Phase 1 — Ingestion & Grounded Routing**: Filters noise, maps memories to existing topic paths, and extracts structured facts.
-- **Phase 2 — Background Dynamic Tree Lifecycle**: Handles leaf node splitting, sibling merging, Leiden graph partitioning, and incremental delta summaries.
-- **Phase 3 — Online Multi-Stage Hybrid Retrieval Engine**: Executes vector + BM25 hybrid search, RRF rank fusion, query classification, and decision-anchor expansion in **1.08s average latency**.
+- **Phase 1 — Ingestion Pipeline**: Filters noise, maps memories to existing topic paths, and extracts structured facts.
+- **Phase 2 — Tree Lifecycle & Maintenance**: Handles leaf node splitting, sibling merging, Leiden graph partitioning, and incremental summaries.
+- **Phase 3 — Online Multi-Stage Hybrid Retrieval Engine**: Executes vector + BM25 hybrid search, RRF rank fusion, query classification, decision-anchor expansion, and memory-type budgeting in **1.08s average retrieval latency in our evaluation setup** (reranking disabled).
 
 👉 **[View Complete Architecture Specification](docs/architecture.md)** &nbsp;|&nbsp; 🔄 **[Trace End-to-End Retrieval Flow](docs/how-retrieval-works.md)** &nbsp;|&nbsp; 🧠 **[Core Architectural Ideas](docs/design-decisions.md)**
 
 ---
 
-## 📊 Evaluation
+## 📊 Where MindCache Works Best
 
-MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchmark assessing retrieval performance across multi-session conversation histories at 1M and 10M token context windows (300 manually graded questions across 15 conversations).
+MindCache is not designed to outperform every memory system on every workload. Its architecture is particularly focused on long-running conversations where useful information is spread across sessions, decisions evolve over time, and answering a question requires understanding the bigger picture.
 
-- 📏 **300 Benchmark Questions** across 15 multi-session conversations
-- ⏱️ **1.08s Average Retrieval Latency** for production queries
-- 🏆 **Best overall performance** on BEAM QA benchmark
+In our evaluation on the BEAM QA benchmark (300 questions across 15 multi-session conversations), MindCache showed its strongest relative performance in **summarization, contradiction resolution, and multi-session reasoning**, while Mem0 performed better on **preference following and information extraction**. Some categories, including temporal reasoning and knowledge update, were closely matched.
 
-👉 **[View Full Evaluation & Benchmark Results](docs/evaluation.md)**
+| Workload Category | MindCache | Mem0 |
+| :--- | ---: | ---: |
+| **Summarization** | **0.75** | 0.46 |
+| **Contradiction resolution** | **0.56** | 0.38 |
+| **Multi-session reasoning** | **0.92** | 0.83 |
+| **Preference following** | 0.79 | **0.84** |
+| **Information extraction** | 0.40 | **0.45** |
+| **Knowledge update** | 0.50 | 0.50 |
+| **Temporal reasoning** | 0.875 | 0.875 |
+
+👉 **[View Full Benchmark & Evaluation Details](docs/evaluation.md)** &nbsp;|&nbsp; 🔬 **[View Deep Competitive Analysis Matrix](docs/competitive-analysis.md)** &nbsp;|&nbsp; 🏗️ **[View Architecture & Evidence Matrix](docs/design-decisions.md)**
 
 ---
 
@@ -287,7 +296,7 @@ mindcache/
 │   ├── db_setup.py          # Table schema initialization
 │   ├── decision_analyzer.py # Decision state tracking logic
 │   ├── embedder.py          # Embedding generation & vector indexing
-│   ├── nodes_summary.py     # Bottom-up RAPTOR delta summarization
+│   ├── nodes_summary.py     # Bottom-up delta summarization
 │   └── reorganize_tree.py   # Tree splitting, merging & Leiden partitioning
 ├── Memory_extract/          # Ingestion & extraction pipeline
 │   ├── input_denoiser.py    # Conversation noise filtering
@@ -327,10 +336,12 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 ## 🗺️ Roadmap
 
 - [x] **Hierarchical Topic Tree**: Dynamic graph organization.
-- [x] **Decision State Machine**: Evolving choice tracking.
-- [x] **Incremental Delta Summaries**: Bottom-up rollup summaries.
-- [ ] **Utility-Aware Memories**: Access-pattern importance scoring.
-- [ ] **Automatic Memory Aging**: Time-decay scoring for episodic memories.
+- [x] **Decision Lifecycle**: Evolving choice tracking (`ACTIVE`, `SUPERSEDED`, `CONDITIONAL`, `REJECTED`).
+- [x] **Incremental Delta Summaries**: Bottom-up rollup summaries across the topic tree.
+- [x] **Hybrid Retrieval & Budgeting**: Vector + BM25 RRF ranking with memory-type quotas.
+- [x] **BEAM QA Evaluation**: Evaluated across 300 questions on 1M and 10M token context windows.
+- [ ] **Model Context Protocol (MCP) Server**: Native MCP integration for AI assistant tooling.
+- [ ] **Developer Tooling & Integrations**: Expanded agent framework adapters (LangChain / LlamaIndex / AutoGen).
 
 ---
 
@@ -341,3 +352,4 @@ We welcome contributions! Please open an issue or submit a pull request on GitHu
 ## 📄 License
 
 MindCache is open-source software licensed under the **[MIT License](LICENSE)**.
+

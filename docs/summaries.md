@@ -2,7 +2,7 @@
 
 Broad high-level questions (e.g. *"What projects have I worked on this month?"* or *"Summarize my backend architecture decisions"*) fail when relying solely on flat vector search, because individual memory snippets lack the broad context required for synthesis.
 
-MindCache addresses this with **Incremental Delta Summaries**—a bottom-up RAPTOR-style summary tree maintained across topic hierarchy nodes.
+MindCache addresses this with **Incremental Delta Summaries**—incremental hierarchical summaries integrated directly into the dynamic topic tree (drawing from bottom-up RAPTOR-style tree rollups).
 
 ---
 
@@ -31,7 +31,7 @@ Available for High-Level Summarization Queries
 Across our BEAM QA follow-up evaluation, hierarchical summaries:
 - Activated on **4–6 broad queries per conversation**.
 - Consistently improved response quality for multi-session synthesis and high-level summaries.
-- Directly converted multiple benchmark failures into strict passes.
+- In our development evaluation, summaries consistently improved response quality on broad and multi-session queries and were associated with several previously failing cases becoming passes.
 
 ---
 

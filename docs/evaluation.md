@@ -1,6 +1,6 @@
 # 📊 MindCache Benchmark & System Evaluation
 
-MindCache was evaluated on the **BEAM QA Benchmark**—a rigorous long-term memory benchmark designed to test retrieval performance across multi-session conversation histories at 1M and 10M token context windows (300 manually graded questions across 15 conversations).
+MindCache was evaluated on the **BEAM QA Benchmark**—a long-term memory benchmark designed to test retrieval performance across multi-session conversation histories at 1M and 10M token context windows (300 manually graded questions across 15 conversations).
 
 ---
 
@@ -13,7 +13,7 @@ MindCache was evaluated on the **BEAM QA Benchmark**—a rigorous long-term memo
 | **Conversations** | 15 |
 | **Context Windows** | 1M / 10M |
 | **Avg. Retrieval Latency** | **1.08 s** |
-| **Overall Performance** | **Best overall among evaluated systems** |
+| **Evaluation Result** | **MindCache achieved the strongest overall result in our BEAM evaluation setup.** |
 
 ---
 
@@ -21,7 +21,7 @@ MindCache was evaluated on the **BEAM QA Benchmark**—a rigorous long-term memo
 
 | System | BEAM Benchmark Summary | Representative Follow-up Evaluation | Memory & Retrieval Architecture |
 | :--- | :--- | :--- | :--- |
-| **MindCache** | 🥇 **Best overall performance*** | Outperformed Mem0 across all manually analyzed conversations | Living topic hierarchy, decision tracking & incremental summaries |
+| **MindCache** | 🥇 **Strongest overall result in BEAM setup*** | Outperformed Mem0 across all manually analyzed conversations | Living topic hierarchy, decision tracking & incremental summaries |
 | **Mem0** | 🥈 **Competitive baseline** | Lower rubric scores and fewer passing answers across runs | Flat Memory Store |
 
 *\* Based on our evaluation of the BEAM benchmark (300 questions across 15 conversations). Full methodology and category breakdowns are described in the accompanying [design article](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian).*
@@ -55,7 +55,7 @@ Each conversation was evaluated using **two complementary metrics**:
 | **Contradiction Resolution** | 🥇 **MindCache** | **0.56 vs 0.38** | Effectively resolves evolving choices and updated facts. |
 | **Multi-Session Reasoning** | 🥇 **MindCache** | **0.92 vs 0.83** | Excels at connecting evidence across separate session histories. |
 | **Knowledge Update** | 🤝 **Tie** | **0.50 vs 0.50** | Both systems effectively manage fact evolution over multi-turn interactions. |
-| **Information Extraction** | 🥇 **Mem0** | **0.40 vs 0.45** | MindCache remains conservative to refrain from hallucinating specifics when context is ambiguous. |
+| **Information Extraction** | 🥈 **Mem0** | **0.40 vs 0.45** | Mem0 achieved a slightly higher score on extracting raw isolated details, as MindCache remains conservative when context is ambiguous. |
 | **Temporal Reasoning** | 🤝 **Tie** | **0.875 vs 0.875** | Both systems accurately reconstruct multi-month timelines and event sequences. |
 | **Preference Following** | 🥇 **Mem0** | **0.79 vs 0.84** | Mem0 maintained a slight edge in retrieving direct raw user preference statements. |
 
@@ -78,10 +78,12 @@ During development, five core architectural decisions were evaluated and retaine
 ## ⚡ Strengths & Remaining Failure Modes
 
 ### Key Strengths
+
 - **Multi-session synthesis**: Seamlessly bridges facts across months of conversation history.
 - **Chronological tracking**: Accurately tracks sequence of events and evolving preferences.
 - **Broad topic coverage**: Hierarchical summaries answer high-level overview questions effectively.
 
 ### ⚠️ Remaining Failure Modes
+
 - **Fine-grained evidence loss**: Compressing long subtrees into high-level summaries can occasionally drop specific minor details required by exact-match test rubrics.
 - **Ambiguity resolution**: Cautious retrieval logic sometimes opts for uncertainty/abstention when multiple candidate memories overlap, costing points on strict exact-match benchmarks.

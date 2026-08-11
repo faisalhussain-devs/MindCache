@@ -30,4 +30,4 @@ To scale up to PostgreSQL for production workloads, ensure the `vector` extensio
 | Setting | Type | Location | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `enable_summarization` | `bool` | Client Constructor | `True` | Builds bottom-up delta summaries of topic tree nodes to support broad overview queries. |
-| `use_reranker` | `bool` | `.search()` Method | `False` | Applies hybrid RRF ordering for **1.08s low-latency retrieval**. Set to `True` to enable the ~600MB Jina v2 Cross-Encoder model. |
+| `use_reranker` | `bool` | `.search()` Method | `False` | Applies Jina v2 Cross-Encoder reranking to the hybrid RRF candidate set. Disabled by default to preserve low-latency retrieval. |

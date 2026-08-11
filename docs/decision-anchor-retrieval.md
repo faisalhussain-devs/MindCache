@@ -23,7 +23,7 @@ History:
 ```
 
 ### Decision States:
-- **`ACTIVE`**: The current authoritative choice. Included in prompt context.
+- **`ACTIVE`**: The current decision choice. Included in prompt context.
 - **`SUPERSEDED`**: Replaced by a newer decision. Excluded from active prompt injection to prevent conflicts.
 - **`CONDITIONAL`**: Active only under specific constraints or environments.
 - **`REJECTED`**: Explicitly evaluated and turned down.

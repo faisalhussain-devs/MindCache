@@ -39,15 +39,15 @@ Vector embeddings excel at semantic similarity, but often miss exact technical t
   This eliminates score normalization issues between vector distances and BM25 scores.
 
 ### 2. BM25 Morphological Aliasing
-Standard BM25 treats different word inflections as entirely separate tokens. MindCache implements an in-memory **Union-Find data structure with lemmatization** to unify word inflections (`database` / `databases` / `databasemanagement`) into canonical equivalence classes during sparse BM25 indexing and querying.
+Standard BM25 treats different word inflections as entirely separate tokens. MindCache implements an in-memory **Union-Find data structure with lemmatization** to unify word inflections (`database` / `databases` or `deploy` / `deployed` / `deploying`) into canonical equivalence classes during sparse BM25 indexing and querying.
 
 ### 3. Adaptive Query Classification
 When a query arrives, MindCache classifies the user's intent into:
 - **Specific Factual Queries**: Directly targets specific leaf nodes and memory facts.
-- **Broad Overview Queries**: Automatically activates high-level [Incremental Delta Summaries](summaries.md) from upper topic tree nodes.
+- **Broad Overview Queries**: Automatically activates high-level [Incremental Delta Summaries](summaries.md) from upper topic tree nodes. Leaf memories and generated summary nodes participate in retrieval as separate candidate types.
 
 ### 4. Decision-Anchor BM25 Expansion
-Active decisions act as retrieval anchors. When a relevant active decision is retrieved, MindCache extracts key decision terms and performs secondary BM25 expansion queries to pull in supporting Episodic and Knowledge memories that standard vector search might miss.
+Active decisions act as retrieval anchors. When a relevant active decision is retrieved, MindCache extracts key decision terms and performs secondary BM25 expansion queries to pull in supporting Episodic and Knowledge memories that initial vector search may miss.
 
 ---
 

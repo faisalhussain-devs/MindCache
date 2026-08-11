@@ -1,16 +1,16 @@
 # ⚙️ MindCache Architecture Overview
 
-MindCache is structured around a 3-phase architecture that separates **offline turn ingestion**, **background dynamic topic tree maintenance**, and **online hybrid retrieval**. This design prevents retrieval latency spikes and keeps prompt context rich, non-redundant, and structured across weeks or months of user interactions.
+MindCache is structured around a 3-phase architecture that separates **turn ingestion**, **dynamic topic tree maintenance**, and **online hybrid retrieval**. This design prevents retrieval latency spikes and keeps prompt context rich, non-redundant, and structured across weeks or months of user interactions.
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ Phase 1: Offline Ingestion Pipeline                    │
-│ Conversation Turns ──> Grounded Routing ──> Extractor  │
+│ Phase 1: Ingestion Pipeline                            │
+│ Conversation Turns ──> Grounded Routing ──> Extractor   │
 └───────────────────────────┬────────────────────────────┘
                             │
                             ▼
 ┌────────────────────────────────────────────────────────┐
-│ Phase 2: Background Dynamic Tree Lifecycle             │
+│ Phase 2: Tree Lifecycle & Maintenance                  │
 │ Leiden Graph Split/Merge ──> Incremental Summaries     │
 └───────────────────────────┬────────────────────────────┘
                             │
@@ -23,7 +23,7 @@ MindCache is structured around a 3-phase architecture that separates **offline t
 
 ---
 
-## Phase 1 — Offline Ingestion Pipeline
+## Phase 1 — Ingestion Pipeline
 
 > **Purpose**: *Convert raw conversation turns into structured memories.*
 
@@ -61,11 +61,11 @@ flowchart LR
 
 ---
 
-## Phase 2 — Background Dynamic Tree Lifecycle
+## Phase 2 — Tree Lifecycle & Maintenance
 
-> **Purpose**: *Maintain the living topic hierarchy incrementally in the background.*
+> **Purpose**: *Maintain the living topic hierarchy incrementally during queue processing.*
 
-The topic tree continuously reorganizes in the background as new memories arrive.
+The topic tree continuously reorganizes as new memories arrive.
 
 ```mermaid
 flowchart LR
@@ -101,9 +101,9 @@ flowchart LR
 
 ## Phase 3 — Online Multi-Stage Hybrid Retrieval Engine
 
-> **Purpose**: *Assemble high-quality, structured retrieval context under 1.08s latency constraints.*
+> **Purpose**: *Assemble high-quality, structured retrieval context under 1.08s average latency in our evaluation setup.*
 
-When `mc.search(query)` is called, MindCache executes online hybrid retrieval designed for **1.08s low latency**.
+When `mc.search(query)` is called, MindCache executes online hybrid retrieval designed for low latency (**1.08s average in our evaluation setup**).
 
 ```mermaid
 flowchart LR

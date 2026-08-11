@@ -58,11 +58,11 @@ The query classifier checks if the query requires high-level synthesis:
 ### Step 4: Decision Anchor Expansion
 MindCache scans the top-ranked candidate pool for `ACTIVE` decision memories (e.g. *"Switched from TensorFlow to PyTorch"*).
 - Extracted decision keywords serve as **search anchors**.
-- MindCache executes secondary BM25 queries to fetch supporting Episodic and Knowledge memories connected to that decision, ensuring no supporting context is missed.
+- MindCache executes secondary BM25 queries to fetch supporting Episodic and Knowledge memories connected to that decision, recovering supporting context that initial vector search may miss.
 
 ### Step 5: Memory Pool Partitioning & Retrieval Budgeting
 To prevent **context inflation** (where 30 similar log entries fill the prompt), candidates are partitioned into four memory pools and constrained by explicit token quotas:
-- **User Memory Pool**: Guarantees user persona & preferences remain intact.
+- **User Memory Pool**: Reserves quota so user persona & preferences remain intact.
 - **Decision Memory Pool**: Enforces active architectural decisions.
 - **Knowledge / Summary Pool**: Supplies domain rules and topic overviews.
 - **Episodic Memory Pool**: Provides specific event evidence.

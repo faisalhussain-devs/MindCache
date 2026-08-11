@@ -17,9 +17,8 @@ Full Index String:
 
 ### Advantages
 
-1. **Enhanced Lexical Context**: A memory stating *"Installed 2.2 with CUDA 12.1 support"* might fail a BM25 query for *"PyTorch deep learning setup"*. Including the ancestor path terms (`Artificial Intelligence`, `Machine Learning`, `Deep Learning`, `PyTorch`) ensures sparse BM25 keyword matching succeeds.
+1. **Enhanced Lexical Context**: A memory stating *"Installed 2.2 with CUDA 12.1 support"* might fail a BM25 query for *"PyTorch deep learning setup"*. Including the ancestor path terms (`Artificial Intelligence`, `Machine Learning`, `Deep Learning`, `PyTorch`) allows sparse BM25 keyword matching to recover relevant context.
 2. **Disambiguation**: Distinguishes memories with identical phrasing that belong to different domain branches (e.g. `Databases → Indexing` vs. `Search Engines → Indexing`).
-3. **Hierarchical Filtering**: Enables fast substring and prefix matching along active tree paths.
 
 ---
 

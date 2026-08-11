@@ -46,7 +46,7 @@ Traditional memory systems treat all extracted statements as generic unstructure
 
 ## 🎯 Why Memory Type Separation Matters
 
-1. **Prevents Retrieval Bias**: In flat vector stores, single high-embedding-similarity categories (like raw event logs) can crowd out critical active decisions or user constraints.
+1. **Prevents Retrieval Bias**: Provides distinct update and retrieval behavior for different kinds of information; retrieval budgeting then prevents any single memory type from dominating the final context.
 2. **Specialized Update Rules**: A decision requires state tracking (`Active` vs `Superseded`), whereas a user preference requires constraint enforcement and an episodic event requires chronological tracking.
 3. **Structured Prompt Formatting**: Allows MindCache to inject neatly partitioned memory blocks into the LLM system prompt:
 

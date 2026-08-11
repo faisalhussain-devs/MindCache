@@ -16,7 +16,7 @@ When new conversation turns are processed, MindCache queries existing top-level 
 - **Mechanism**: The extraction pipeline routes newly extracted memories to the most suitable existing path or creates a new child topic branch under an existing parent node if needed.
 
 ### 2. Leaf Nodes vs. Internal Nodes
-- **Leaf Nodes**: Contain memory clusters (e.g. `[memories: 47]`) storing raw User, Decision, Episodic, and Knowledge facts.
+- **Leaf Nodes**: Contain extracted memories (User, Decision, Episodic, Knowledge); internal nodes organize those memories into broader topics and maintain summaries.
 - **Internal Nodes**: Represent higher-level semantic concepts (e.g. `Software Architecture → Database Engineering`). Internal nodes maintain **Incremental Delta Summaries** that synthesize the child nodes underneath them.
 
 ---

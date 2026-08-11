@@ -44,7 +44,7 @@ Drains the pending queue, extracts structured memories, updates decision states,
 Retrieves formatted structured context to inject into an LLM prompt.
 - **`query`**: User question or prompt text.
 - **`top_k_corpus`**: Number of memory candidates to retrieve.
-- **`use_reranker`**: Set to `True` to enable Jina v2 Cross-Encoder reranking. Default is `False` for 1.08s low-latency hybrid RRF retrieval.
+- **`use_reranker`**: Set to `True` to enable Jina v2 Cross-Encoder reranking. Default is `False` for 1.08s average retrieval latency in our evaluation setup.
 
 ### `get_all(user_id: str = "default", memory_type: str = None) -> list[dict]`
 Retrieves stored memories for a user, optionally filtered by `memory_type` (`"user"`, `"knowledge"`, `"episodic"`, `"decision"`).
