@@ -4,9 +4,10 @@
 
 [![BEAM-1M](https://img.shields.io/badge/Benchmark-BEAM--1M%20Passed-success)](https://arxiv.org/abs/2404.17299)
 [![BEAM-10M](https://img.shields.io/badge/Benchmark-BEAM--10M%20Passed-success)](https://arxiv.org/abs/2404.17299)
+[![MCP](https://img.shields.io/badge/MCP-Supported-blueviolet)](https://modelcontextprotocol.io/)
 [![PyPI version](https://img.shields.io/badge/pypi-v0.1.0-blue)](https://pypi.org/project/mindcache/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Medium Blog](https://img.shields.io/badge/Read_Design_Blog-Medium-black?logo=medium)](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian)
+[![4-Minute Blog](https://img.shields.io/badge/Read_4--Minute_Blog-Medium-black?logo=medium)](https://medium.com/@faisaliitian/i-built-an-ai-memory-system-because-just-retrieve-more-wasnt-working-0b1dc9a60c01)
 [![YouTube Demo](https://img.shields.io/badge/Watch_Demo-YouTube-red?logo=youtube)](https://www.youtube.com/watch?v=wcTQkyN1CoM)
 
 ---
@@ -25,7 +26,15 @@ It turns conversations into organized, persistent memory and continuously update
 
 ---
 
-👉 **[Read the Design Article](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a?sharedUserId=faisaliitian)** &nbsp;|&nbsp; 🎥 **[Watch Demo Video](https://www.youtube.com/watch?v=wcTQkyN1CoM)** &nbsp;|&nbsp; ⚡ **[Quick Start](#-quick-start-30-seconds)**
+👉 **[Read the 4-Minute Blog](https://medium.com/@faisaliitian/i-built-an-ai-memory-system-because-just-retrieve-more-wasnt-working-0b1dc9a60c01)** &nbsp;|&nbsp; 🎥 **[Watch Demo Video](https://www.youtube.com/watch?v=wcTQkyN1CoM)** &nbsp;|&nbsp; ⚡ **[Quick Start](#-quick-start-30-seconds)** &nbsp;|&nbsp; 📖 **[Read the Engineering Journal](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a)**
+
+---
+
+### 📖 Want the technical deep dive?
+
+The short article explains the problem, architecture, and lessons behind MindCache in about four minutes.
+
+For the full engineering story — including implementation details, architectural decisions, experiments, failures, retrieval design, and evaluation — see the **[MindCache Engineering Journal](https://medium.com/@faisaliitian/building-mindcache-designing-an-agentic-memory-system-for-long-term-ai-7359e0cf6e2a)**.
 
 ---
 
@@ -326,7 +335,7 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 
 - **`add(messages, user_id)`**: Buffer conversation turns into the ingestion queue in milliseconds.
 - **`process(user_id)`**: Extract memories, update decision state, and refresh dynamic topic summaries.
-- **`search(query, user_id)`**: Retrieve formatted context ready for LLM prompt injection.
+- **`search(query, user_id)`**: Retrieve structured memory context and retrieval metadata for LLM prompt construction.
 - **`inspect(user_id, view)`**: Inspect stored memory state (`memories`, `tree`, `all`).
 - **`forget(memory_id, user_id)`**: Remove a specific memory entry by ID.
 - **`reset(user_id)`**: Clear all stored memory data for a user.
@@ -335,9 +344,9 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 
 ---
 
-## 🔌 Model Context Protocol (MCP) Server
+## 🔌 MCP Server — Connect MindCache to AI Clients
 
-MindCache includes a built-in **MCP server** (`mindcache-mcp`) that exposes long-term memory tools to AI assistants (Claude Desktop, Cursor, Codex, etc.) over stdio transport.
+MindCache includes a built-in **MCP server** (`mindcache-mcp`) that exposes long-term memory tools to MCP-compatible AI clients such as Claude Desktop, Cursor, and Codex over stdio.
 
 ### 1. Install MCP Extension
 ```bash
@@ -355,7 +364,7 @@ mindcache-mcp --db-path my_memory.db --provider gemini --model-name gemini-2.5-f
 | :--- | :--- |
 | `add_memory` | Buffer conversation turns into the ingestion queue. |
 | `process_memory` | Extract structured memories & update topic tree summaries. |
-| `search_memory` | Search and retrieve formatted context for a query. |
+| `search_memory` | Search and retrieve structured memory context, query classification, and retrieval metadata. |
 | `inspect_memories` | Inspect stored memory records (`user`, `knowledge`, `episodic`, `decision`). |
 | `inspect_tree` | View the live dynamic topic hierarchy tree. |
 | `forget_memory` | Remove a specific memory entry by ID. |

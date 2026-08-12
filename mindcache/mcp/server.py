@@ -9,10 +9,10 @@ import argparse
 from typing import List, Dict, Any, Optional
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
     _MCP_AVAILABLE = True
 except ImportError:
-    FastMCP = None
+    MCPServer = None
     _MCP_AVAILABLE = False
 
 from mindcache import MindCache
@@ -22,7 +22,7 @@ def create_mcp_server(
     db_path: str = "mindcache.db",
     provider: str = "gemini",
     model_name: str = "gemini-2.5-flash",
-) -> FastMCP:
+) -> MCPServer:
     """
     Instantiate a FastMCP server and register MindCache memory tools.
     """
@@ -32,7 +32,7 @@ def create_mcp_server(
             "Please install it using: pip install 'mindcache[mcp]'"
         )
 
-    mcp = FastMCP("MindCache Memory Server")
+    mcp = MCPServer("MindCache Memory Server")
     mc = MindCache(db_path=db_path, provider=provider, model_name=model_name)
 
     @mcp.tool()
