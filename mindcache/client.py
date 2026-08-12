@@ -333,7 +333,7 @@ class MindCache:
                     else:
                         logger.info("[MindCache] No new memories to ingest into CollapsedTreeCache.")
                 
-        return {"success": success, "failed": failed, "tree": get_tree_cache(user_id=user_id)}
+        return {"success": success, "failed": failed}
 
     def search(self, query: str, user_id: str = "default", top_k_corpus: int = 30, use_reranker: bool = False) -> RetrievalResult:
         """

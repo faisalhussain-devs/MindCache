@@ -5,7 +5,6 @@ Exposes the core MindCache memory SDK as structured MCP tools for AI assistants
 and agent frameworks (Claude, Codex, etc.) over stdio transport.
 """
 
-import sys
 import argparse
 from typing import List, Dict, Any, Optional
 
@@ -15,7 +14,6 @@ try:
 except ImportError:
     FastMCP = None
     _MCP_AVAILABLE = False
-
 
 from mindcache import MindCache
 

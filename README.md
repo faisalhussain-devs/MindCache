@@ -335,6 +335,51 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 
 ---
 
+## 🔌 Model Context Protocol (MCP) Server
+
+MindCache includes a built-in **MCP server** (`mindcache-mcp`) that exposes long-term memory tools to AI assistants (Claude Desktop, Cursor, Codex, etc.) over stdio transport.
+
+### 1. Install MCP Extension
+```bash
+pip install "mindcache[mcp]"
+```
+
+### 2. Launch CLI Server
+```bash
+mindcache-mcp --db-path my_memory.db --provider gemini --model-name gemini-2.5-flash
+```
+
+### 3. Exposed MCP Tools
+
+| MCP Tool | Description |
+| :--- | :--- |
+| `add_memory` | Buffer conversation turns into the ingestion queue. |
+| `process_memory` | Extract structured memories & update topic tree summaries. |
+| `search_memory` | Search and retrieve formatted context for a query. |
+| `inspect_memories` | Inspect stored memory records (`user`, `knowledge`, `episodic`, `decision`). |
+| `inspect_tree` | View the live dynamic topic hierarchy tree. |
+| `forget_memory` | Remove a specific memory entry by ID. |
+
+### 4. Claude Desktop Setup
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mindcache": {
+      "command": "mindcache-mcp",
+      "args": ["--db-path", "my_memory.db"],
+      "env": {
+        "GEMINI_API_KEY": "your-gemini-api-key"
+      }
+    }
+  }
+}
+```
+
+---
+
 ## 🗺️ Roadmap
 
 - [x] **Hierarchical Topic Tree**: Dynamic graph organization.
@@ -342,7 +387,7 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 - [x] **Incremental Delta Summaries**: Bottom-up rollup summaries across the topic tree.
 - [x] **Hybrid Retrieval & Budgeting**: Vector + BM25 RRF ranking with memory-type quotas.
 - [x] **BEAM QA Evaluation**: Evaluated across 300 questions on 1M and 10M token context windows.
-- [ ] **Model Context Protocol (MCP) Server**: Native MCP integration for AI assistant tooling.
+- [x] **Model Context Protocol (MCP) Server**: Native stdio MCP server (`mindcache-mcp`) with 6 core tools.
 - [ ] **Developer Tooling & Integrations**: Expanded agent framework adapters (LangChain / LlamaIndex / AutoGen).
 
 ---
