@@ -774,7 +774,7 @@ class ActivePathRetrieval:
             query_type=query_type,
         )
 
-    def _fetch_memories_batch(self, session, memory_ids_by_type, user_id=None):
+    def _fetch_memories_batch(self, session, memory_ids_by_type, user_id):
         results = {}
         mem_class_map = {
             "knowledge": KnowledgeMemory,
@@ -782,6 +782,8 @@ class ActivePathRetrieval:
             "user": UserMemory,
             "decision": DecisionMemory,
         }
+        if not user_id:
+            raise ValueError("user_id is required")
         for mtype, ids in memory_ids_by_type.items():
             if not ids:
                 continue

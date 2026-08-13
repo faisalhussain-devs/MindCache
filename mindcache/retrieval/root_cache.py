@@ -14,12 +14,19 @@ CE_TEXT_MAX_WORDS = 200
 
 _spacy_nlp = None
 
+def ensure_spacy_model():
+    import spacy
+    try:
+        return spacy.load("en_core_web_sm", disable=["parser", "ner"])
+    except OSError:
+        from spacy.cli import download
+        download("en_core_web_sm")
+        return spacy.load("en_core_web_sm", disable=["parser", "ner"])
 
 def _get_spacy_nlp():
     global _spacy_nlp
     if _spacy_nlp is None:
-        import spacy
-        _spacy_nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+        _spacy_nlp = ensure_spacy_model()
     return _spacy_nlp
 
 
