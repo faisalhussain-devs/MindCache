@@ -5,7 +5,7 @@
 [![BEAM-1M](https://img.shields.io/badge/Benchmark-BEAM--1M%20Passed-success)](https://arxiv.org/abs/2404.17299)
 [![BEAM-10M](https://img.shields.io/badge/Benchmark-BEAM--10M%20Passed-success)](https://arxiv.org/abs/2404.17299)
 [![MCP](https://img.shields.io/badge/MCP-Supported-blueviolet)](https://modelcontextprotocol.io/)
-[![PyPI version](https://img.shields.io/badge/pypi-v0.1.0-blue)](https://pypi.org/project/mindcache/)
+[![PyPI version](https://img.shields.io/badge/pypi-v1.0.0-blue)](https://pypi.org/project/mindcache/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![4-Minute Blog](https://img.shields.io/badge/Read_4--Minute_Blog-Medium-black?logo=medium)](https://medium.com/@faisaliitian/i-built-an-ai-memory-system-because-just-retrieve-more-wasnt-working-0b1dc9a60c01)
 [![YouTube Demo](https://img.shields.io/badge/Watch_Demo-YouTube-red?logo=youtube)](https://www.youtube.com/watch?v=wcTQkyN1CoM)
@@ -76,7 +76,7 @@ Conversations
 
 ---
 
-## 🎯 Memory changes. MindCache keeps up.
+## 🎯 Memory changes. MindCache keeps up
 
 People change their minds. Projects change direction. Old decisions become irrelevant.
 
@@ -108,7 +108,7 @@ MindCache keeps the old decision in the history, but knows that it is no longer 
 
 ---
 
-## 📚 Memory needs context, not just facts.
+## 📚 Memory needs context, not just facts
 
 Remembering individual things is useful. But over time, an agent also needs to understand how those things fit together.
 
@@ -189,12 +189,14 @@ A 2-minute walkthrough covering installation, ingestion, automatic hierarchy gen
 ## 🚀 Quick Start (30 Seconds)
 
 ### 1. Install
+
 ```bash
 export GEMINI_API_KEY="your-gemini-api-key"
 pip install mindcache
 ```
 
 ### 2. Usage
+
 ```python
 from mindcache import MindCache
 
@@ -265,9 +267,9 @@ LLM Prompt
 
 The MindCache pipeline operates in three distinct phases:
 
-- **Phase 1 — Ingestion Pipeline**: Filters noise, maps memories to existing topic paths, and extracts structured facts.
-- **Phase 2 — Tree Lifecycle & Maintenance**: Handles leaf node splitting, sibling merging, Leiden graph partitioning, and incremental summaries.
-- **Phase 3 — Online Multi-Stage Hybrid Retrieval Engine**: Executes vector + BM25 hybrid search, RRF rank fusion, query classification, decision-anchor expansion, and memory-type budgeting in **1.08s average retrieval latency in our evaluation setup** (reranking disabled).
+* **Phase 1 — Ingestion Pipeline**: Filters noise, maps memories to existing topic paths, and extracts structured facts.
+* **Phase 2 — Tree Lifecycle & Maintenance**: Handles leaf node splitting, sibling merging, Leiden graph partitioning, and incremental summaries.
+* **Phase 3 — Online Multi-Stage Hybrid Retrieval Engine**: Executes vector + BM25 hybrid search, RRF rank fusion, query classification, decision-anchor expansion, and memory-type budgeting in **1.08s average retrieval latency in our evaluation setup** (reranking disabled).
 
 👉 **[View Complete Architecture Specification](docs/architecture.md)** &nbsp;|&nbsp; 🔄 **[Trace End-to-End Retrieval Flow](docs/how-retrieval-works.md)** &nbsp;|&nbsp; 🧠 **[Core Architectural Ideas](docs/design-decisions.md)**
 
@@ -324,8 +326,8 @@ mindcache/
 
 MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for production workloads.
 
-- ⚙️ **SQLite**: Default local setup (`mindcache.db`).
-- 🐘 **PostgreSQL**: Set `MINDCACHE_DB_URL="postgresql://..."` or pass to `MindCache(db_path=...)`.
+* ⚙️ **SQLite**: Default local setup (`mindcache.db`).
+* 🐘 **PostgreSQL**: Set `MINDCACHE_DB_URL="postgresql://..."` or pass to `MindCache(db_path=...)`.
 
 👉 **[View Full Configuration & Setup Guide](docs/configuration.md)**
 
@@ -333,12 +335,12 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 
 ## 📡 API Reference
 
-- **`add(messages, user_id)`**: Buffer conversation turns into the ingestion queue in milliseconds.
-- **`process(user_id)`**: Extract memories, update decision state, and refresh dynamic topic summaries.
-- **`search(query, user_id)`**: Retrieve structured memory context and retrieval metadata for LLM prompt construction.
-- **`inspect(user_id, view)`**: Inspect stored memory state (`memories`, `tree`, `all`).
-- **`forget(memory_id, user_id)`**: Remove a specific memory entry by ID.
-- **`reset(user_id)`**: Clear all stored memory data for a user.
+* **`add(messages, user_id)`**: Buffer conversation turns into the ingestion queue in milliseconds.
+* **`process(user_id)`**: Extract memories, update decision state, and refresh dynamic topic summaries.
+* **`search(query, user_id)`**: Retrieve structured memory context and retrieval metadata for LLM prompt construction.
+* **`inspect(user_id, view)`**: Inspect stored memory state (`memories`, `tree`, `all`).
+* **`forget(memory_id, user_id)`**: Remove a specific memory entry by ID.
+* **`reset(user_id)`**: Clear all stored memory data for a user.
 
 👉 **[View Complete API Reference](docs/API.md)**
 
@@ -349,11 +351,13 @@ MindCache supports SQLite out-of-the-box and PostgreSQL (`pgvector`) for product
 MindCache includes a built-in **MCP server** (`mindcache-mcp`) that exposes long-term memory tools to MCP-compatible AI clients such as Claude Desktop, Cursor, and Codex over stdio.
 
 ### 1. Install MCP Extension
+
 ```bash
 pip install "mindcache[mcp]"
 ```
 
 ### 2. Launch CLI Server
+
 ```bash
 mindcache-mcp --db-path my_memory.db --provider gemini --model-name gemini-2.5-flash
 ```
@@ -391,13 +395,19 @@ Add to your `claude_desktop_config.json`:
 
 ## 🗺️ Roadmap
 
-- [x] **Hierarchical Topic Tree**: Dynamic graph organization.
-- [x] **Decision Lifecycle**: Evolving choice tracking (`ACTIVE`, `SUPERSEDED`, `CONDITIONAL`, `REJECTED`).
-- [x] **Incremental Delta Summaries**: Bottom-up rollup summaries across the topic tree.
-- [x] **Hybrid Retrieval & Budgeting**: Vector + BM25 RRF ranking with memory-type quotas.
-- [x] **BEAM QA Evaluation**: Evaluated across 300 questions on 1M and 10M token context windows.
-- [x] **Model Context Protocol (MCP) Server**: Native stdio MCP server (`mindcache-mcp`) with 6 core tools.
-- [ ] **Developer Tooling & Integrations**: Expanded agent framework adapters (LangChain / LlamaIndex / AutoGen).
+* [x] **Hierarchical Topic Tree**: Dynamic graph organization.
+* [x] **Decision Lifecycle**: Evolving choice tracking (`ACTIVE`, `SUPERSEDED`, `CONDITIONAL`, `REJECTED`).
+* [x] **Incremental Delta Summaries**: Bottom-up rollup summaries across the topic tree.
+* [x] **Hybrid Retrieval & Budgeting**: Vector + BM25 RRF ranking with memory-type quotas.
+* [x] **BEAM QA Evaluation**: Evaluated across 300 questions on 1M and 10M token context windows.
+* [x] **Model Context Protocol (MCP) Server**: Native stdio MCP server (`mindcache-mcp`) with 6 core tools.
+* [ ] **Developer Tooling & Integrations**: Expanded agent framework adapters (LangChain / LlamaIndex / AutoGen).
+
+## Future Work
+
+* **3-way RRF ranking** — Evaluate 3-way RRF (Semantic + Lexical + Temporal ranking) for recency-sensitive queries and evolving state retrieval.
+* **Selective stateful memories** — Explore state tracking for User and Knowledge memories that represent evolving information, while keeping ingestion cost bounded.
+* **Utility-based retrieval** — Explore retrieval strategies that optimize for the expected utility of a memory for a query rather than semantic similarity alone.
 
 ---
 
@@ -408,4 +418,3 @@ We welcome contributions! Please open an issue or submit a pull request on GitHu
 ## 📄 License
 
 MindCache is open-source software licensed under the **[MIT License](LICENSE)**.
-

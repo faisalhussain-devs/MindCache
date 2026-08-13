@@ -3,11 +3,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Summary_Extractor():
-    def __init__(self, sys_prompt=None):
+    def __init__(
+        self,
+        sys_prompt=None,
+        model_name="gemini-2.5-flash",
+        provider="gemini",
+    ):
         self.sys_prompt = sys_prompt
+        self.model_name = model_name
+        self.provider = provider
 
     def summary_extract(self, prompt):
-        llm = SafeAI()
+        llm = SafeAI(
+            model_name=self.model_name,
+            provider=self.provider,
+        )
         raw_json = llm.generate(
             prompt=prompt,
             system_prompt=self.sys_prompt,

@@ -270,3 +270,47 @@ def test_reset_does_not_affect_other_users(mc, db_session, monkeypatch):
     bob_mems = mc.inspect(user_id="bob")
     assert len(bob_mems) == 1
 
+
+def test_provider_model_propagation_init(monkeypatch):
+    """Verify MindCache passes provider and model_name down to components."""
+    monkeypatch.setattr("mindcache.retrieval.root_cache.refresh_tree_cache", lambda *a, **kw: None)
+    with patch("mindcache.retrieval.active_path.ActivePathRetrieval"), \
+         patch("mindcache.client.Memory_Extractor") as mock_extractor_cls, \
+         patch("mindcache.client.DatabaseManager") as mock_db_mgr_cls:
+
+        from mindcache.client import MindCache
+
+        client = MindCache(provider="deepseek", model_name="deepseek-r1")
+
+        assert client.provider == "deepseek"
+        assert client.model_name == "deepseek-r1"
+
+        mock_db_mgr_cls.assert_called_once_with(model_name="deepseek-r1", provider="deepseek")
+        mock_extractor_cls.assert_called_once_with(
+            db_manager=mock_db_mgr_cls.return_value,
+            model_name="deepseek-r1",
+            provider="deepseek"
+        )
+
+
+def test_provider_model_propagation_downstream(monkeypatch):
+    """Verify DecisionStateAnalyzer, RecursiveSummarizer, and Summary_Extractor propagate provider/model to SafeAI."""
+    from mindcache.Database.decision_analyzer import DecisionStateAnalyzer
+    from mindcache.Database.nodes_summary import RecursiveSummarizer
+    from mindcache.Memory_extract.summary_extractor import Summary_Extractor
+
+    analyzer = DecisionStateAnalyzer(provider="anthropic", model_name="claude-3-5-sonnet")
+    assert analyzer.extractor.provider == "anthropic"
+    assert analyzer.extractor.model_name == "claude-3-5-sonnet"
+
+    summarizer = RecursiveSummarizer(provider="openai", model_name="gpt-4o")
+    assert summarizer.extractor.provider == "openai"
+    assert summarizer.extractor.model_name == "gpt-4o"
+
+    extractor = Summary_Extractor(provider="deepseek", model_name="deepseek-chat")
+    with patch("mindcache.Memory_extract.summary_extractor.SafeAI") as mock_safe_ai:
+        mock_safe_ai.return_value.generate.return_value = '{"test": "ok"}'
+        extractor.summary_extract("test prompt")
+        mock_safe_ai.assert_called_once_with(model_name="deepseek-chat", provider="deepseek")
+
+

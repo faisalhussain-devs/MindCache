@@ -12,9 +12,16 @@ FULL_REBUILD_THRESHOLD = 10       # parent nodes: full rebuild after N increment
 LEAF_DESC_REBUILD_THRESHOLD = 10  # leaf nodes:   force full description rebuild after N updates
 
 class RecursiveSummarizer:
-    def __init__(self):
+    def __init__(
+        self,
+        model_name="gemini-2.5-flash",
+        provider="gemini",
+    ):
         self.Session = Session
-        self.extractor = Summary_Extractor()
+        self.extractor = Summary_Extractor(
+            model_name=model_name,
+            provider=provider,
+        )
     
     def _build_search_text(self, summary_data):
         """Convert structured summary to plain text for embedding/BM25."""

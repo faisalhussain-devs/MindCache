@@ -1,9 +1,19 @@
-# ============================================================
-#  MindCache — .gitignore
-#  Keep this repo clean: no models, no data dumps, no caches.
-# ============================================================
+# Virtual environments
+.venv/
+.venv-test/
+venv/
+env/
 
-# ── Python ──────────────────────────────────────────────────
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Python 
 __pycache__/
 *.py[cod]
 *.pyo

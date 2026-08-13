@@ -34,8 +34,16 @@ Your job: Determine the current STATUS of each decision within this semantic clu
 
 
 class DecisionStateAnalyzer:
-    def __init__(self):
-        self.extractor = Summary_Extractor(sys_prompt=ANALYSIS_PROMPT)
+    def __init__(
+        self,
+        model_name="gemini-2.5-flash",
+        provider="gemini",
+    ):
+        self.extractor = Summary_Extractor(
+            sys_prompt=ANALYSIS_PROMPT,
+            model_name=model_name,
+            provider=provider,
+        )
 
     def analyze_cluster(self, session: Session, cluster_decisions: list[DecisionMemory]):
         """

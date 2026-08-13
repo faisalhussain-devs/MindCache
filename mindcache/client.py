@@ -63,7 +63,12 @@ class MindCache:
             os.environ["GEMINI_API_KEYS"] = gemini_api_key
             
         init_db()
-        self.db_manager = DatabaseManager()
+        self.model_name = model_name
+        self.provider = provider
+        self.db_manager = DatabaseManager(
+            model_name=model_name,
+            provider=provider,
+        )
         self.retriever = ActivePathRetrieval()
         self.extractor = Memory_Extractor(
             db_manager=self.db_manager,
@@ -255,7 +260,10 @@ class MindCache:
             logger.info(f"[MindCache] Running recursive summaries for user '{user_id}'...")
             from mindcache.Database.nodes_summary import RecursiveSummarizer
             try:
-                RecursiveSummarizer().run(user_id=user_id)
+                RecursiveSummarizer(
+                    model_name=self.model_name,
+                    provider=self.provider,
+                ).run(user_id=user_id)
             except Exception as sum_err:
                 logger.warning(f"[MindCache Warning] Summarization job failed: {sum_err}")
 

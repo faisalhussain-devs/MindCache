@@ -73,9 +73,15 @@ class TopicResolver:
         return node
 
 class DatabaseManager:
-    def __init__(self):
+    def __init__(
+        self,
+        model_name="gemini-2.5-flash",
+        provider="gemini",
+    ):
         init_db()
         self.Session = Session
+        self.model_name = model_name
+        self.provider = provider
 
     def consolidate_processing_jobs(
         self,
@@ -661,7 +667,10 @@ class DatabaseManager:
 
             # 6. Filter for clusters with size > 1 and check if they need analysis
             analyzed_count = 0
-            analyzer = DecisionStateAnalyzer()
+            analyzer = DecisionStateAnalyzer(
+                model_name=self.model_name,
+                provider=self.provider,
+            )
             
             for cluster in components:
                 if len(cluster) <= 1:
