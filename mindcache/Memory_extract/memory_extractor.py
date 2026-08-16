@@ -171,14 +171,14 @@ class Memory_Extractor:
         text = text.replace("```", "").replace("$$", " ")
         return text.strip()
 
-    def memory_extract(self, prompt="", query_embedding: bytes = None):
+    def memory_extract(self, prompt="", user_id = "default", query_embedding: bytes = None):
         prompt = self._clean_prompt(prompt)
 
         final_prompt = prompt
         grounded = False
         if self._db is not None:
             try:
-                top_paths = self._db.get_top_leaf_paths(prompt, top_k=10, query_embedding=query_embedding)
+                top_paths = self._db.get_top_leaf_paths(prompt, top_k=10, user_id = user_id, query_embedding=query_embedding)
                 if top_paths:
                     grounded = True
                     formatted = "\n".join(f"  {i + 1}. {p}" for i, p in enumerate(top_paths))

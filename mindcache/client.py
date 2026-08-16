@@ -191,6 +191,7 @@ class MindCache:
             try:
                 extracted_data = self.extractor.memory_extract(
                     job_data["raw_prompt"],
+                    user_id=user_id,
                     query_embedding=job_data["embedding"],
                 )
 

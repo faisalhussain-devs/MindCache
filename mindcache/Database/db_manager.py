@@ -356,7 +356,7 @@ class DatabaseManager:
         finally:
             session.close()
 
-    def get_top_leaf_paths(self, raw_text: str, top_k: int = 5, query_embedding: bytes = None) -> list[str]:
+    def get_top_leaf_paths(self, raw_text: str, top_k: int = 5, user_id="default", query_embedding: bytes = None) -> list[str]:
         """
         Smart Ingestion: embed the incoming raw job text, compare against all
         leaf embeddings (Path + newest memories up to 8000 Nomic tokens), return
@@ -379,7 +379,7 @@ class DatabaseManager:
                 query_matrix = embedder.encode([clean_text], is_query=False)  # shape (1, dim)
 
             # 2. Load all topics, build helper maps
-            topics = session.query(Topic).all()
+            topics = session.query(Topic).filter_by(user_id).all()
             if not topics:
                 return []
 
